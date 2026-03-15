@@ -29,11 +29,13 @@ class OverlayManager:
         proj_width: int = 1280,
         proj_height: int = 720,
         mode: str = "screen",
+        image_rotate: int = 0,
     ):
         self.H_proj = H_proj
         self.proj_width = proj_width
         self.proj_height = proj_height
         self.mode = mode
+        self.image_rotate = image_rotate  # how the image was rotated before Gemini saw it
         self.canvas = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
 
     def handle_tool_result(self, name: str, result: dict):
@@ -45,9 +47,15 @@ class OverlayManager:
             return
 
         content_type = result.get("content_type", "annotation")
-        placement = result.get("placement", [0, 0, 1000, 1000])
+        placement = list(result.get("placement", [0, 0, 1000, 1000]))
         title = result.get("title", "")
         data = result.get("data", {})
+
+        # TODO: Un-rotation disabled until coordinate system is sorted out
+        # if self.image_rotate != 0:
+        #     original = list(placement)
+        #     placement = self._unrotate_placement(placement)
+        #     print(f"[OverlayManager] Un-rotated {original} -> {placement}")
 
         overlay = self.render_overlay(content_type, placement, title, data)
         self.canvas = self.place_on_canvas(overlay, placement)
@@ -123,12 +131,13 @@ class OverlayManager:
         use_direct = True  # default to direct screen mapping
 
         if self.mode == "projector" and self.H_proj is not None:
-            # Map the four corners of the placement rectangle through H_proj
+            # Map the four corners of the placement rectangle through H_proj.
+            # Map placement rectangle corners through H_proj.
             src_corners = np.array([
-                [x_min, y_min],
-                [x_max, y_min],
-                [x_max, y_max],
-                [x_min, y_max],
+                [y_min, x_min],
+                [y_max, x_min],
+                [y_max, x_max],
+                [y_min, x_max],
             ], dtype=np.float64).reshape(1, 4, 2)
             dst_corners = cv2.perspectiveTransform(src_corners, self.H_proj)
             dst_corners = dst_corners.reshape(4, 2)
@@ -159,6 +168,28 @@ class OverlayManager:
                 canvas[py_min:py_max, px_min:px_max] = resized
 
         return canvas
+
+    def _unrotate_placement(self, placement: list) -> list:
+        """Un-rotate Gemini coordinates from rotated image back to marker space.
+
+        Gemini returns [ymin, xmin, ymax, xmax] in 0-1000 of the image it saw.
+        If the image was rotated CW by N degrees before Gemini saw it,
+        we reverse that rotation on the coordinates.
+        """
+        ymin, xmin, ymax, xmax = placement
+
+        if self.image_rotate == 90:
+            # CW 90: image (y, x) came from original (x, 1000-y)
+            # So to go back: orig_y = x, orig_x = 1000 - y
+            return [xmin, 1000 - ymax, xmax, 1000 - ymin]
+        elif self.image_rotate == 180:
+            return [1000 - ymax, 1000 - xmax, 1000 - ymin, 1000 - xmin]
+        elif self.image_rotate == 270:
+            # CCW 90: image (y, x) came from original (1000-x, y)
+            # So to go back: orig_y = 1000 - x, orig_x = y
+            return [1000 - xmax, ymin, 1000 - xmin, ymax]
+
+        return placement
 
     def clear(self):
         """Clear all overlays (reset canvas to black)."""

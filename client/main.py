@@ -39,21 +39,37 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float):
-    """Capture and send video frames at the specified FPS."""
+async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float,
+                     overlay_manager: OverlayManager = None):
+    """Capture and send video frames at the specified FPS.
+
+    When overlays are active, sends the last clean frame instead of
+    the live view (which would show the projected overlay on the paper).
+    """
     interval = 1.0 / fps
     frame_count = 0
+    last_clean_frame = None
     while True:
         jpeg_bytes, _ = camera.get_rectified_frame()
         if jpeg_bytes:
-            await client.send_video(jpeg_bytes)
+            has_overlay = overlay_manager and np.any(overlay_manager.canvas > 0)
+            if has_overlay and last_clean_frame:
+                # Send cached clean frame so Gemini doesn't see its own overlay
+                await client.send_video(last_clean_frame)
+            else:
+                last_clean_frame = jpeg_bytes
+                await client.send_video(jpeg_bytes)
             frame_count += 1
-            # Save periodically for debugging
+            # Save first few frames for debugging
             if frame_count <= 3:
-                path = f"debug_sent_frame_{frame_count}.jpg"
-                with open(path, "wb") as f:
-                    f.write(jpeg_bytes)
-                print(f"[TableLight] Saved frame to {path} ({len(jpeg_bytes)} bytes)")
+                try:
+                    import os
+                    path = os.path.join(os.getcwd(), f"debug_sent_frame_{frame_count}.jpg")
+                    with open(path, "wb") as f:
+                        f.write(jpeg_bytes)
+                    print(f"[TableLight] Saved frame to {path} ({len(jpeg_bytes)} bytes)")
+                except Exception as e:
+                    print(f"[TableLight] Failed to save frame: {e}")
         await asyncio.sleep(interval)
 
 
@@ -176,6 +192,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Disable audio capture/playback",
     )
+    parser.add_argument(
+        "--rotate",
+        type=int,
+        default=0,
+        choices=[0, 90, 180, 270],
+        help="Rotate rectified image CW before sending to Gemini (default: 0)",
+    )
     return parser.parse_args(argv)
 
 
@@ -197,7 +220,7 @@ async def main(args: argparse.Namespace | None = None):
         args = parse_args()
 
     # --- Camera ---
-    camera = CameraCapture(url=args.url, webcam=args.webcam)
+    camera = CameraCapture(url=args.url, webcam=args.webcam, rotate=args.rotate)
     camera.start()
     print("[TableLight] Camera started.")
 
@@ -215,6 +238,7 @@ async def main(args: argparse.Namespace | None = None):
         proj_width=proj_width,
         proj_height=proj_height,
         mode=args.mode,
+        image_rotate=args.rotate,
     )
     _shared_state["overlay_manager"] = overlay_manager
 
@@ -274,7 +298,7 @@ async def main(args: argparse.Namespace | None = None):
 
     # --- Build task list (NO display_loop — OpenCV runs on main thread) ---
     tasks = [
-        asyncio.create_task(video_loop(camera, client, args.fps), name="video"),
+        asyncio.create_task(video_loop(camera, client, args.fps, overlay_manager), name="video"),
         asyncio.create_task(client.receive_loop(), name="receive"),
     ]
 

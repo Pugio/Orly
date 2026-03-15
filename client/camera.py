@@ -134,10 +134,12 @@ class CameraCapture:
         url: str | None = None,
         webcam: int | None = None,
         output_size: tuple[int, int] = (768, 768),
+        rotate: int = 0,
     ):
         self.url = url
         self.webcam = webcam
         self.output_size = output_size
+        self.rotate = rotate  # CW rotation in degrees (0, 90, 180, 270)
 
         self.cap = None
         self.detector = None
@@ -191,6 +193,15 @@ class CameraCapture:
 
         # Rectify and encode
         rectified = rectify_frame(frame, self.H_cached, self.output_size)
+
+        # Rotate so text is upright for Gemini
+        if self.rotate == 90:
+            rectified = cv2.rotate(rectified, cv2.ROTATE_90_CLOCKWISE)
+        elif self.rotate == 180:
+            rectified = cv2.rotate(rectified, cv2.ROTATE_180)
+        elif self.rotate == 270:
+            rectified = cv2.rotate(rectified, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
         jpeg_bytes = encode_jpeg(rectified)
 
         return jpeg_bytes, self.H_cached

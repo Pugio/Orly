@@ -48,6 +48,7 @@ def main():
     print("  h2         — highlight at [100, 100, 400, 400]")
     print("  g          — graph y=x^2 at [100, 500, 500, 950]")
     print("  a          — annotation at [600, 100, 900, 500]")
+    print("  dots       — project labeled dots at known table coordinates")
     print("  clear      — clear all overlays")
     print("  q          — quit")
     print()
@@ -126,6 +127,35 @@ def main():
                 "data": {"text": "Check your work!"},
             })
             print(f"Annotation rendered. Canvas non-black: {np.count_nonzero(om.canvas)}")
+        elif cmd == "dots":
+            om.clear()
+            canvas = om.canvas.copy()
+            # Project labeled dots at key table coordinates through H_proj
+            if H_proj is not None:
+                test_points = [
+                    ((0, 0), "0,0"),
+                    ((500, 0), "500,0"),
+                    ((1000, 0), "1000,0"),
+                    ((0, 500), "0,500"),
+                    ((500, 500), "500,500"),
+                    ((1000, 500), "1000,500"),
+                    ((0, 1000), "0,1000"),
+                    ((500, 1000), "500,1000"),
+                    ((1000, 1000), "1000,1000"),
+                ]
+                for (tx, ty), label in test_points:
+                    pt = np.array([[[ty, tx]]], dtype=np.float64)
+                    r = cv2.perspectiveTransform(pt, H_proj)[0, 0]
+                    px, py = int(r[0]), int(r[1])
+                    if 0 <= px < proj_width and 0 <= py < proj_height:
+                        cv2.circle(canvas, (px, py), 12, (0, 255, 255), -1)
+                        cv2.putText(canvas, label, (px + 15, py + 5),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                om.canvas = canvas
+                print("Dots projected. Look at where they land on the mat.")
+                print("(0,0)=marker0, (1000,0)=marker1, (1000,1000)=marker2, (0,1000)=marker3")
+            else:
+                print("No H_proj loaded — can't project dots")
         else:
             print(f"Unknown command: {cmd}")
 
