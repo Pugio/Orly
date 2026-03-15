@@ -1,0 +1,31 @@
+[project]
+name = "tablelight"
+version = "0.1.0"
+description = "Projected AR tutoring system powered by Gemini Live API"
+requires-python = ">=3.12"
+dependencies = [
+    "google-adk",
+    "opencv-contrib-python",
+    "numpy",
+    "matplotlib",
+    "pyaudio",
+    "websockets",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["client*", "backend*"]
+
+[tool.pytest.ini_options]
+
+testpaths = ["tests"]
+asyncio_mode = "auto"
