@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -77,6 +78,46 @@ class SessionStore:
             for f in os.listdir(self.programs_dir)
             if f.endswith(".py")
         )
+
+    def _state_path(self) -> str:
+        return os.path.join(self.session_dir, "state.json")
+
+    def _read_state_file(self) -> dict:
+        path = self._state_path()
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r") as f:
+            return json.load(f)
+
+    def _write_state_file(self, data: dict) -> None:
+        with open(self._state_path(), "w") as f:
+            json.dump(data, f, indent=2)
+
+    def save_overlay_state(self, state: dict) -> None:
+        """Save overlay state dict to session/state.json."""
+        existing = self._read_state_file()
+        existing.update(state)
+        self._write_state_file(existing)
+
+    def load_overlay_state(self) -> dict:
+        """Load overlay state from session/state.json. Returns {} if missing."""
+        data = self._read_state_file()
+        if not data:
+            return {}
+        # Return everything except scene_order
+        result = {k: v for k, v in data.items() if k != "scene_order"}
+        return result if result else {}
+
+    def save_scene_order(self, order: list[str]) -> None:
+        """Save scene order to session/state.json (merges with existing)."""
+        existing = self._read_state_file()
+        existing["scene_order"] = order
+        self._write_state_file(existing)
+
+    def load_scene_order(self) -> list[str]:
+        """Load scene order from session/state.json. Returns [] if missing."""
+        data = self._read_state_file()
+        return data.get("scene_order", [])
 
     def get_manifest(self) -> dict:
         """Return a manifest of all session assets."""
