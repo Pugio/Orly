@@ -47,15 +47,15 @@ def render_graph(
     ax.set_ylim(y_range)
 
     # Style axes for projector visibility
-    ax.tick_params(colors="white", labelsize=12)
-    ax.spines["bottom"].set_color("white")
-    ax.spines["left"].set_color("white")
+    ax.tick_params(colors="cyan", labelsize=12)
+    ax.spines["bottom"].set_color("cyan")
+    ax.spines["left"].set_color("cyan")
     ax.spines["top"].set_color("black")
     ax.spines["right"].set_color("black")
-    ax.xaxis.label.set_color("white")
-    ax.yaxis.label.set_color("white")
-    ax.set_xlabel("x", fontsize=14, color="white")
-    ax.set_ylabel("y", fontsize=14, color="white")
+    ax.xaxis.label.set_color("cyan")
+    ax.yaxis.label.set_color("cyan")
+    ax.set_xlabel("x", fontsize=14, color="cyan")
+    ax.set_ylabel("y", fontsize=14, color="cyan")
 
     fig.tight_layout()
 
