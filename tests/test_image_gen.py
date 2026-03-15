@@ -131,13 +131,20 @@ class TestOverlayManagerImageAsync:
         """handle_tool_result for image should update canvas immediately (loading)."""
         from client.overlay_manager import OverlayManager
         from unittest.mock import patch
+        import threading
 
         om = OverlayManager(H_proj=None, proj_width=640, proj_height=480, mode="screen")
         assert om.canvas.max() == 0  # starts black
 
-        # Mock render_image so the background thread doesn't call the API
-        with patch("client.overlay_manager.render_image") as mock_gen:
-            mock_gen.return_value = np.zeros((480, 640, 3), dtype=np.uint8)
+        # Use an Event to block the background thread so it can't overwrite
+        # the loading placeholder before we check the canvas.
+        block = threading.Event()
+
+        def slow_render(*args, **kwargs):
+            block.wait(timeout=5)
+            return np.zeros((480, 640, 3), dtype=np.uint8)
+
+        with patch("client.overlay_manager.render_image", side_effect=slow_render):
             om.handle_tool_result("project_overlay", {
                 "content_type": "image",
                 "placement": [100, 100, 600, 600],
@@ -145,5 +152,6 @@ class TestOverlayManagerImageAsync:
                 "data": {"prompt": "a circle"},
             })
 
-        # Canvas should have the loading placeholder (not black anymore)
-        assert om.canvas.max() > 0, "Loading placeholder should be on canvas immediately"
+            # Canvas should have the loading placeholder (not black anymore)
+            assert om.canvas.max() > 0, "Loading placeholder should be on canvas immediately"
+            block.set()  # unblock the background thread
