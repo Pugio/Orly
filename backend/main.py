@@ -54,8 +54,8 @@ def parse_text_message(data: str) -> tuple[str, str | None]:
     """Parse a text (JSON) WebSocket frame from the edge client.
 
     Returns (message_type, payload).
-    message_type: "text" or "close".
-    payload: string for text, None for close.
+    message_type: "text", "close", "notification", or "set_proactive".
+    payload: string for text/notification/set_proactive, None for close.
     Raises ValueError for invalid messages.
     """
     msg = json.loads(data)
@@ -70,6 +70,8 @@ def parse_text_message(data: str) -> tuple[str, str | None]:
         return "notification", json.dumps(
             {"source": msg.get("source", ""), "text": msg.get("text", "")}
         )
+    if msg_type == "set_proactive":
+        return "set_proactive", str(msg.get("enabled", True)).lower()
     raise ValueError(f"Unknown text message type: '{msg_type}'.")
 
 
