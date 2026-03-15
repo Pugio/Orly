@@ -9,8 +9,13 @@ are extracted for testability. The CameraCapture class wraps them for use in
 the main client loop.
 """
 
+import logging
+import time
+
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ArUco setup — must match calibration mat
 ARUCO_DICT = cv2.aruco.DICT_4X4_50
@@ -145,6 +150,19 @@ class CameraCapture:
         self.detector = None
         self.H_cached = None  # last-good homography
 
+        # Frame freshness and failure tracking
+        self._last_detection_time: float | None = None
+        self._consecutive_failures: int = 0
+        self._max_consecutive_failures: int = 10
+
+        # Detection statistics
+        self.stats: dict[str, int] = {
+            "frames_captured": 0,
+            "frames_with_markers": 0,
+            "frames_using_cache": 0,
+            "consecutive_failures": 0,
+        }
+
         # Destination points for the rectified output
         w, h = output_size
         self.dst_points = np.array([
@@ -171,16 +189,39 @@ class CameraCapture:
         parameters = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(dictionary, parameters)
 
+    @property
+    def marker_staleness_seconds(self) -> float | None:
+        """Seconds since markers were last successfully detected.
+
+        Returns None if markers have never been detected.
+        """
+        if self._last_detection_time is None:
+            return None
+        return time.monotonic() - self._last_detection_time
+
     def _capture_frame(self) -> np.ndarray | None:
         """Capture a single frame from the camera.
 
         Grabs and discards one buffered frame to reduce staleness.
+        Tracks consecutive read failures and logs a warning after
+        max_consecutive_failures.
         """
         if self.cap is None:
             return None
         self.cap.grab()  # discard one stale frame
         ret, frame = self.cap.read()
-        return frame if ret else None
+        if not ret:
+            self._consecutive_failures += 1
+            self.stats["consecutive_failures"] = self._consecutive_failures
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                logger.warning(
+                    "Camera read failed %d times consecutively",
+                    self._consecutive_failures,
+                )
+            return None
+        self._consecutive_failures = 0
+        self.stats["consecutive_failures"] = 0
+        return frame
 
     def get_rectified_frame(self) -> tuple[bytes | None, np.ndarray | None]:
         """Capture a frame, rectify it, return (jpeg_bytes, H_cam).
@@ -192,12 +233,18 @@ class CameraCapture:
         if frame is None:
             return None, None
 
+        self.stats["frames_captured"] += 1
+
         # Detect markers and compute homography
         detected = detect_markers(frame, self.detector)
         H = compute_homography(detected, self.dst_points)
 
         if H is not None:
             self.H_cached = H
+            self._last_detection_time = time.monotonic()
+            self.stats["frames_with_markers"] += 1
+        elif self.H_cached is not None:
+            self.stats["frames_using_cache"] += 1
 
         if self.H_cached is None:
             return None, None
