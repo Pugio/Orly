@@ -124,43 +124,42 @@ The system is split into a **cloud-hosted agent backend** and a **local edge cli
 │  GOOGLE CLOUD (Cloud Run)                                    │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  Agent Backend (FastAPI + ADK Runner)                    │ │
+│  │  Agent Backend (FastAPI + raw google-genai SDK)          │ │
 │  │                                                          │ │
 │  │  ┌──────────────┐    ┌──────────────────────────────┐  │ │
-│  │  │ WebSocket     │    │  ADK Runner.run_live()        │  │ │
-│  │  │ endpoint      │    │  ┌────────────────────────┐  │  │ │
-│  │  │ /ws/session   │◄──▶│  │ LiveRequestQueue       │  │  │ │
-│  │  │               │    │  │  .send_realtime(audio) │  │  │ │
-│  │  │ Receives:     │    │  │  .send_realtime(video) │  │  │ │
-│  │  │  audio chunks │    │  │  .send_content(text)   │  │  │ │
-│  │  │  video frames │    │  └────────────────────────┘  │  │ │
-│  │  │  text commands│    │                                │  │ │
-│  │  │               │    │  Agent(name="lumi_tutor")      │  │ │
-│  │  │ Sends:        │    │    tools=[project_overlay]     │  │ │
-│  │  │  audio reply  │    │    model=gemini-2.5-flash-...  │  │ │
-│  │  │  tool calls   │    │                                │  │ │
-│  │  │  transcripts  │    │  Auto: tool dispatch, session  │  │ │
-│  │  └──────────────┘    │  resumption, VAD, compression  │  │ │
-│  │                       └──────────────────────────────┘  │ │
+│  │  │ WebSocket     │    │  client.aio.live.connect()    │  │ │
+│  │  │ endpoint      │    │                                │  │ │
+│  │  │ /ws/session   │◄──▶│  send_realtime_input(audio=)  │  │ │
+│  │  │               │    │  send_realtime_input(video=)  │  │ │
+│  │  │ Binary frames:│    │  send_client_content(text)    │  │ │
+│  │  │  0x01+PCM     │    │                                │  │ │
+│  │  │  0x02+JPEG    │    │  session.receive() → events   │  │ │
+│  │  │  0x03+PCM out │    │    audio, transcripts, tools  │  │ │
+│  │  │               │    │                                │  │ │
+│  │  │ JSON frames:  │    │  Tool schemas auto-generated   │  │ │
+│  │  │  text, close  │    │  from Python function sigs     │  │ │
+│  │  │  transcripts  │    │                                │  │ │
+│  │  │  tool results │    │  model=gemini-2.5-flash-       │  │ │
+│  │  │  interrupted  │    │    native-audio-latest         │  │ │
+│  │  └──────────────┘    └──────────────────────────────┘  │ │
 │  └────────────────────────────────────────────────────────┘ │
 └────────────────────────┬────────────────────────────────────┘
                          │ WebSocket (wss://)
-                         │
+                         │ Binary + JSON mixed frames
 ┌────────────────────────▼────────────────────────────────────┐
 │  LOCAL EDGE CLIENT (Python)                                  │
 │                                                              │
 │  ┌────────────┐  ┌────────────┐  ┌─────────────────────┐   │
 │  │ Camera      │  │ Microphone  │  │ ArUco Detection     │   │
 │  │ (IP Webcam) │  │ (laptop)    │  │ + Homography        │   │
-│  │ MJPEG       │  │ PyAudio     │  │ (OpenCV)            │   │
+│  │ MJPEG       │  │ 16kHz/20ms │  │ (OpenCV)            │   │
 │  └──────┬─────┘  └──────┬─────┘  └──────────┬──────────┘   │
 │         │               │                     │              │
 │         ▼               ▼                     ▼              │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  Session Manager                                      │   │
-│  │  - Sends audio + rectified video to backend           │   │
-│  │  - Receives audio + tool calls from backend           │   │
-│  │  - Routes tool calls to Overlay Renderer              │   │
+│  │  WebSocket Client                                     │   │
+│  │  - Binary frames for audio/video (zero-copy, no b64) │   │
+│  │  - JSON frames for text/tool results/transcripts      │   │
 │  │  - Plays audio responses through speakers             │   │
 │  └──────────────────────────────┬───────────────────────┘   │
 │                                  │                           │
@@ -182,10 +181,10 @@ The system is split into a **cloud-hosted agent backend** and a **local edge cli
 
 **Why this split?**
 
-- The hackathon requires the backend to be hosted on Google Cloud. By putting the ADK Runner + Gemini Live session on Cloud Run, we satisfy this cleanly.
-- ADK handles all session infrastructure: `LiveRequestQueue` buffers incoming audio/video, `Runner.run_live()` manages the Gemini Live connection lifecycle, tool calls are dispatched and executed automatically, and session resumption is transparent. We write the agent definition and tools — not the plumbing.
-- The edge client handles latency-sensitive physical I/O (camera capture at 30fps, audio at 16kHz, projector rendering) that would be impractical to route through the cloud.
-- The WebSocket connection between them carries only the data needed: compressed JPEG frames (~1/sec), PCM audio chunks, and JSON tool call/response messages.
+- The hackathon requires the backend to be hosted on Google Cloud. By putting the Gemini Live session on Cloud Run, we satisfy this cleanly.
+- The raw `google-genai` SDK gives us direct control over audio/video streams — they travel as separate concurrent channels with no FIFO serialization, achieving ~1.6s speech-to-response latency.
+- The edge client handles latency-sensitive physical I/O (camera capture, audio at 16kHz, projector rendering) that would be impractical to route through the cloud.
+- Binary WebSocket frames for audio/video eliminate base64 encode/decode overhead. JSON is used only for text messages.
 - This architecture would let multiple edge clients connect to a single cloud backend in the future (e.g., multiple desks in a classroom).
 
 ### 3.2 The Shared Coordinate System
@@ -207,7 +206,7 @@ The phone and projector can be at completely different positions and angles. The
 
 ---
 
-## 4. ADK + Gemini Live API — Technical Reference
+## 4. Gemini Live API — Technical Reference
 
 ### 4.1 Model Selection
 
@@ -847,13 +846,10 @@ tablelight/
 ├── requirements.txt
 ├── .env.example                         (GOOGLE_API_KEY, PHONE_IP, BACKEND_URL)
 │
-├── backend/                             (Cloud Run — FastAPI + ADK Runner)
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── main.py                          (FastAPI + WebSocket endpoint)
-│   ├── agent.py                         (ADK Agent definition)
-│   ├── tools.py                         (project_overlay tool function)
-│   └── deploy.sh                        (gcloud deployment script)
+├── backend/                             (Cloud Run — FastAPI + raw GenAI SDK)
+│   ├── main.py                          (FastAPI + WebSocket + binary protocol)
+│   ├── agent.py                         (system prompt + tool schema generation)
+│   └── tools.py                         (project_overlay, refresh_view, show_scene)
 │
 ├── client/                              (Local edge client)
 │   ├── main.py                          (asyncio orchestrator)
@@ -865,6 +861,19 @@ tablelight/
 │   │   ├── annotation.py               (text/arrow annotations)
 │   │   └── highlight.py                (region highlighting)
 │   └── ws_client.py                     (WebSocket client to Cloud Run backend)
+│
+├── simulation/                          (hardware-free testing + benchmarks)
+│   ├── fake_audio.py                    (synthetic PCM: silence, sine, TTS)
+│   ├── fake_camera.py                   (synthetic JPEG test frames)
+│   ├── sim_client.py                    (WS client that runs scenarios)
+│   ├── scenarios.py                     (silence, question, tool call, interrupt)
+│   └── latency_benchmark.py            (CLI runner with summary tables)
+│
+├── infra/                               (Cloud Run deployment)
+│   ├── Dockerfile                       (slim Python 3.12, backend deps only)
+│   ├── deploy.sh                        (gcloud run deploy script)
+│   ├── .dockerignore
+│   └── cloudbuild.yaml
 │
 ├── calibration/
 │   ├── generate_calibration_mat.py      ✅ exists
@@ -958,7 +967,38 @@ The demo video must be under 4 minutes and show real software working. Here's a 
 
 ---
 
-## 14. Future Directions
+## 14. Latency Optimizations Applied
+
+Measured via simulation harness (`simulation/latency_benchmark.py`):
+
+| Optimization | Before | After | Saving |
+|---|---|---|---|
+| ADK → raw GenAI SDK (separate audio/video streams) | ~5000ms | 2249ms | ~2750ms |
+| silence_duration_ms 1000 → 300 | 2249ms | ~1937ms | ~312ms |
+| prefix_padding_ms 200 → 50 | — | — | ~150ms |
+| JSON+base64 → binary WS frames for audio/video | 1937ms | 1593ms | ~344ms |
+| Audio chunks 800→320 samples (50ms→20ms) | — | — | faster VAD onset |
+| JPEG quality 85→70 for Gemini input | — | — | ~30% smaller frames |
+| Cached _has_content flag (replaces per-frame np.any scan) | — | — | ~1ms/frame |
+
+**Final benchmark (simple_question): 1593ms round-trip** (3.1x faster than ADK).
+
+### WebSocket Protocol
+
+Binary frames with 1-byte type prefix for audio/video (zero serialization overhead):
+- `0x01` + PCM → audio from client (16kHz, 16-bit mono, 20ms chunks)
+- `0x02` + JPEG → video from client (1 FPS, quality 70)
+- `0x03` + PCM → audio response from server (24kHz)
+
+JSON text frames for everything else (small, infrequent):
+- `{"type": "text", "text": "..."}` — text input
+- `{"type": "transcript_in/out", "text": "..."}` — transcriptions
+- `{"type": "tool_result", "name": "...", "result": {...}}` — tool calls
+- `{"type": "interrupted"}` — barge-in
+
+---
+
+## 15. Future Directions
 
 Beyond the hackathon:
 
@@ -968,7 +1008,6 @@ Beyond the hackathon:
 - **Hand gesture interaction.** Detect pointing to select a problem without voice.
 - **Classroom mode.** Multiple edge clients connecting to a single Cloud Run backend — one teacher's aide covering many desks.
 - **Higher-quality projector.** 1080p short-throw enables readable text and detailed diagrams.
-- **Google ADK migration.** ADK Streaming would provide a more structured agent framework for production.
 
 ---
 
