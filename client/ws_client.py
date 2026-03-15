@@ -1,6 +1,5 @@
 """WebSocket client that connects to the Cloud Run backend."""
 
-import asyncio
 import json
 
 import websockets
@@ -23,11 +22,15 @@ class TableLightClient:
     def __init__(self, backend_url: str):
         self.backend_url = backend_url
         self.ws = None
-        self._on_audio = None        # async def(audio_bytes)
-        self._on_tool_result = None  # async def(name, result)
-        self._on_transcript = None   # async def(direction, text)
-        self._on_interrupted = None  # async def()
-        self._on_refresh_view = None # async def()
+        self._on_audio = None           # async def(audio_bytes)
+        self._on_tool_result = None     # async def(name, result)
+        self._on_transcript = None      # async def(direction, text)
+        self._on_interrupted = None     # async def()
+        self._on_refresh_view = None    # async def()
+        self._on_run_program = None     # async def(name, code, description)
+        self._on_stop_program = None    # async def(name)
+        self._on_get_overlay_state = None  # async def() -> dict
+        self._on_list_programs = None       # async def()
 
     async def connect(self, text_only: bool = False):
         """Connect to backend WebSocket.
@@ -88,6 +91,29 @@ class TableLightClient:
     def on_refresh_view(self, callback):
         self._on_refresh_view = callback
 
+    def on_run_program(self, callback):
+        """Register callback for program execution requests. callback(name, code, description)"""
+        self._on_run_program = callback
+
+    def on_stop_program(self, callback):
+        """Register callback for program stop requests. callback(name)"""
+        self._on_stop_program = callback
+
+    def on_get_overlay_state(self, callback):
+        """Register callback for overlay state queries. callback() -> dict"""
+        self._on_get_overlay_state = callback
+
+    def on_list_programs(self, callback):
+        """Register callback for program list queries. callback()"""
+        self._on_list_programs = callback
+
+    async def send_notification(self, source: str, text: str) -> None:
+        """Send an async notification to the backend."""
+        if not self.connected:
+            return
+        msg = json.dumps({"type": "notification", "source": source, "text": text})
+        await self.ws.send(msg)
+
     async def receive_loop(self):
         """Receive and dispatch messages from backend.
 
@@ -117,6 +143,18 @@ class TableLightClient:
                     await self._on_transcript(direction, msg["text"])
                 elif msg_type == "interrupted" and self._on_interrupted:
                     await self._on_interrupted()
+                elif msg_type == "run_program" and self._on_run_program:
+                    await self._on_run_program(
+                        msg.get("name", ""),
+                        msg.get("code", ""),
+                        msg.get("description", ""),
+                    )
+                elif msg_type == "stop_program" and self._on_stop_program:
+                    await self._on_stop_program(msg.get("name", ""))
+                elif msg_type == "get_overlay_state" and self._on_get_overlay_state:
+                    await self._on_get_overlay_state()
+                elif msg_type == "list_programs" and self._on_list_programs:
+                    await self._on_list_programs()
         except websockets.exceptions.ConnectionClosed as e:
             print(f"[TableLight] Backend connection closed: {e}")
         except Exception as e:
