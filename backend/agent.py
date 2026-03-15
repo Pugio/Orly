@@ -13,7 +13,16 @@ import inspect
 import re
 from typing import Any, Callable, get_type_hints
 
-from backend.tools import project_overlay, refresh_view, show_scene
+from backend.tools import (
+    advance_step,
+    get_overlay_state,
+    list_programs,
+    project_overlay,
+    refresh_view,
+    run_program,
+    show_scene,
+    stop_program,
+)
 
 SYSTEM_PROMPT = """You are a friendly, encouraging child assistant called Lumi.
 You can see the child's work surface through a camera.
@@ -37,6 +46,10 @@ OVERLAY CONTENT TYPES — choose the right one:
 - "graph": Use ONLY for plotting a single mathematical function y=f(x). Requires an expression, x_range, and y_range.
 - "annotation": Use for short single-line text labels.
 - "highlight": Use to highlight a region on the child's work.
+- "steps": Use for multi-step explanations that reveal one step at a time. Data: {"steps": [{"title": "Step 1", "content": "..."}, ...]}. After projecting, use `advance_step` to reveal each step with an animation. Start with step 0 (nothing shown), then advance to 1, 2, etc.
+- "number_line": For showing a number line with points and ranges. data: {"min_val": -5, "max_val": 5, "points": [{"value": 2, "label": "x", "color": "#00ff00"}], "ranges": [{"start": -1, "end": 3, "color": "#ffff00", "label": "solution set"}]}.
+- "geometry": For geometric constructions — points, lines, circles, arcs, angles. data: {"elements": [{"type": "point", "pos": [3, 4], "label": "A"}, {"type": "line", "from": [0, 0], "to": [3, 4]}, {"type": "circle", "center": [0, 0], "radius": 5}], "x_range": [-6, 6], "y_range": [-6, 6], "show_grid": true}.
+- "chemistry": For simple molecular structure diagrams. data: {"atoms": [{"symbol": "O", "pos": [0, 0]}, {"symbol": "H", "pos": [-1, -0.5]}], "bonds": [{"from": 0, "to": 1, "order": 1}]}.
 
 SPATIAL AWARENESS:
 - The table surface uses a 0-1000 normalised coordinate system.
@@ -63,6 +76,37 @@ VIEWING THE TABLE:
 - You continuously see camera frames of the table, but when overlays are active, you see a cached clean frame (without your overlays) to avoid seeing your own projections.
 - The cached clean frame may be stale — call `refresh_view` when you need to see the current state (e.g. the child says "look at what I drew" or "I changed something"). Do this BEFORE trying to describe what you see if the child has indicated they made changes.
 - When generating images with "include_view": true, the current camera view is sent as a reference so the generated image can incorporate what's on the table.
+
+INTERACTIVE PROGRAMS:
+- Use `run_program` to create real-time interactive experiences on the table.
+- Programs run on the edge client at camera frame rate — much faster than waiting for your response.
+- Programs have access to the `table` API: overlays, object tracking, sounds, notifications.
+- Give each program a descriptive unique name (e.g. "instrument-tracker", "math-game").
+- Use `get_overlay_state` to see what's currently projected before placing new overlays.
+- Use `stop_program` to stop a running program, `list_programs` to see what's running.
+- When a program sends a notification (via table.notify()), you'll receive it as a text update.
+- Example interactive experiences:
+  - Musical table: project instrument images, track a toy, play sounds on contact
+  - Story narration: generate scene images, advance through pages with object tracking
+  - Math games: project number targets, track a pointer, score on correct answers
+  - Drawing enhancement: watch what the child draws, add animated effects around it
+
+OVERLAY NAMING:
+- Every overlay should have a descriptive name so it can be referenced later.
+- Use `get_overlay_state` to inspect the current state of all overlays as a JSON description with an ASCII grid visualization.
+
+PROACTIVE OBSERVATION:
+- Watch the student's writing between frames.
+- If a clear error is spotted (wrong sign, dropped term, arithmetic mistake), offer a gentle correction.
+- Frame corrections as questions: "Are you sure about that 7? I counted 8 when I looked at the problem."
+- Never interrupt while the student is actively speaking.
+- Wait at least 10 seconds between proactive comments.
+- Only comment on errors with high confidence — do not guess.
+
+POINTING:
+- When you receive a pointing notification, the student is gesturing at a specific location on the table.
+- Identify what's at or near that position and respond as if they said "this one" or "this problem."
+- Pointing at (y, x) means roughly that area in the 0-1000 coordinate space. Look for content within ~100 units of that point.
 """
 
 MODEL = "gemini-2.5-flash-native-audio-latest"
@@ -201,7 +245,16 @@ def function_to_declaration(func: Callable) -> dict:
 # Build tool declarations and registry from the tool functions
 # ---------------------------------------------------------------------------
 
-_TOOL_FUNCTIONS: list[Callable] = [project_overlay, refresh_view, show_scene]
+_TOOL_FUNCTIONS: list[Callable] = [
+    project_overlay,
+    refresh_view,
+    show_scene,
+    run_program,
+    stop_program,
+    list_programs,
+    get_overlay_state,
+    advance_step,
+]
 
 TOOL_DECLARATIONS: list[dict] = [function_to_declaration(f) for f in _TOOL_FUNCTIONS]
 
