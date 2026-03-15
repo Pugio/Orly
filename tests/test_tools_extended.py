@@ -79,7 +79,7 @@ class TestProjectOverlayEdgeCases:
 
     def test_empty_data_dict_accepted(self):
         result = project_overlay(
-            content_type="diagram",
+            content_type="annotation",
             placement=[100, 100, 500, 500],
             title="Test",
             data={},

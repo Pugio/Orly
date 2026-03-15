@@ -41,15 +41,14 @@ class TestProjectOverlayValid:
         assert result["status"] == "displayed"
         assert result["content_type"] == "highlight"
 
-    def test_diagram_returns_success(self):
+    def test_diagram_is_invalid(self):
         result = project_overlay(
             content_type="diagram",
             placement=[200.0, 200.0, 800.0, 800.0],
             title="Number line",
             data={"elements": ["0", "1", "2", "3"]},
         )
-        assert result["status"] == "displayed"
-        assert result["content_type"] == "diagram"
+        assert result["status"] == "error"
 
     def test_boundary_placement_zero_and_thousand(self):
         result = project_overlay(

@@ -10,7 +10,8 @@ def project_overlay(
     """Project a visual overlay onto the student's work surface via projector.
 
     Args:
-        content_type: Type of visual — "graph", "diagram", "annotation", "highlight", or "markdown".
+        content_type: Type of visual — "graph", "annotation", "highlight", "markdown",
+              "image", "number_line", "geometry", "chemistry", or "steps".
         placement: Where to place it on the table, [ymin, xmin, ymax, xmax] normalised 0-1000.
                    Choose empty space near relevant content. Never overlap existing work.
                    For markdown and annotation, use a LARGE box (at least 500 units wide
@@ -38,7 +39,7 @@ def project_overlay(
     Returns:
         dict with status of the projection.
     """
-    _VALID_TYPES = {"graph", "diagram", "annotation", "highlight", "markdown", "image"}
+    _VALID_TYPES = {"graph", "annotation", "highlight", "markdown", "image", "number_line", "steps", "geometry", "chemistry"}
 
     # Validate content_type.
     if content_type not in _VALID_TYPES:
@@ -112,6 +113,93 @@ def show_scene(scene_name: str, placement: list[float]) -> dict:
     }
 
 
+def run_program(name: str, code: str, description: str = "") -> dict:
+    """Run a mini-program on the table surface.
+
+    Programs execute on the edge client with access to the `table` API for
+    real-time interaction — tracking objects, placing overlays, playing sounds,
+    and responding to the camera feed at frame rate.
+
+    The code runs in a restricted Python environment with access to:
+    - `table` — the TableAPI (overlays, tracking, sounds, notifications)
+    - `np` — numpy for array/math operations
+    - `cv2` — OpenCV for image processing
+    - `math` — standard math functions
+    - `time` — time.time() and time.sleep()
+
+    To respond to camera frames, register an on_frame callback:
+        def on_frame(frame):
+            tracked = table.get_tracked("toy")
+            if tracked and tracked["visible"]:
+                y, x = tracked["center"]
+                table.place_overlay("marker", "highlight",
+                    [y-25, x-25, y+25, x+25], {"color": "#00ff00"})
+        table.on_frame(on_frame)
+
+    Args:
+        name: Unique name for the program.
+        code: Python source code to execute.
+        description: What the program does.
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "started",
+        "name": name,
+        "description": description,
+    }
+
+
+def stop_program(name: str) -> dict:
+    """Stop a running mini-program.
+
+    Args:
+        name: Name of the program to stop.
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "stopping",
+        "name": name,
+    }
+
+
+def list_programs() -> dict:
+    """List all running mini-programs and their status.
+
+    The actual program list is on the edge client. This tool triggers
+    a query — the results will arrive as a notification shortly after.
+
+    Returns:
+        dict with status. Actual program list arrives as a notification.
+    """
+    return {
+        "status": "fetching",
+        "description": "Program list requested. Results will arrive as a notification.",
+    }
+
+
+def get_overlay_state() -> dict:
+    """Get the current state of all overlays on the table.
+
+    Returns a description of all active overlays with their names,
+    types, positions, and an ASCII grid visualization of the table layout.
+    Use this to understand what's currently projected before making changes.
+
+    The actual state is on the edge client. This tool triggers a query —
+    the full overlay state will arrive as a notification shortly after.
+
+    Returns:
+        dict with status. Actual overlay state arrives as a notification.
+    """
+    return {
+        "status": "fetching",
+        "description": "Overlay state requested. Results will arrive as a notification.",
+    }
+
+
 def refresh_view(reason: str) -> dict:
     """Temporarily hide overlays and capture a fresh view of the table.
 
@@ -131,4 +219,24 @@ def refresh_view(reason: str) -> dict:
         "status": "refreshing",
         "reason": reason,
         "description": "Overlays temporarily hidden. Next frame will be a fresh clean view.",
+    }
+
+
+def advance_step(overlay_name: str, step_number: int) -> dict:
+    """Advance a step-by-step overlay to show the next step.
+
+    Use this after projecting a "steps" overlay to reveal steps one at a time.
+    The overlay will animate to show the specified step number.
+
+    Args:
+        overlay_name: Name of the steps overlay to advance.
+        step_number: Which step to advance to (1-based).
+
+    Returns:
+        dict with status of the advancement.
+    """
+    return {
+        "status": "advancing",
+        "overlay_name": overlay_name,
+        "step_number": step_number,
     }
