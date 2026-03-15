@@ -76,6 +76,17 @@ DST_POINTS = np.array([
 ], dtype=np.float32)
 
 
+def rotate_image(img, degrees):
+    """Rotate image clockwise by 0, 90, 180, or 270 degrees."""
+    if degrees == 90:
+        return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    elif degrees == 180:
+        return cv2.rotate(img, cv2.ROTATE_180)
+    elif degrees == 270:
+        return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return img
+
+
 def open_video_stream(url=None, webcam=None):
     """Open either an IP Webcam stream or a local webcam."""
     if url:
@@ -179,6 +190,8 @@ def main():
     parser = argparse.ArgumentParser(description="PoC 1: Camera-to-table homography")
     parser.add_argument("--url", type=str, help="IP Webcam URL, e.g. http://192.168.1.100:8080")
     parser.add_argument("--webcam", type=int, default=None, help="Local webcam index (e.g. 0)")
+    parser.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270],
+                        help="Rotate rectified output CW by this many degrees (default: 0)")
     args = parser.parse_args()
 
     if not args.url and args.webcam is None:
@@ -268,6 +281,7 @@ def main():
         # Show rectified view if we have a homography
         if H_current is not None:
             rectified = cv2.warpPerspective(frame, H_current, (OUTPUT_W, OUTPUT_H))
+            rectified = rotate_image(rectified, args.rotate)
             show_on_laptop("Rectified Table View", rectified)
 
         # Handle keys — from OpenCV window OR terminal stdin
@@ -284,6 +298,7 @@ def main():
             break
         elif key == ord('s') and H_current is not None:
             rectified = cv2.warpPerspective(frame, H_current, (OUTPUT_W, OUTPUT_H))
+            rectified = rotate_image(rectified, args.rotate)
             cv2.imwrite("rectified_output.png", rectified)
             print("Saved rectified_output.png")
         elif key == ord('h') and H_current is not None:

@@ -29,7 +29,7 @@ GROUNDING:
 
 root_agent = Agent(
     name="lumi_tutor",
-    model="gemini-2.5-flash-preview-native-audio-dialog",
+    model="gemini-2.5-flash-native-audio-latest",
     instruction=SYSTEM_PROMPT,
     tools=[project_overlay],
 )

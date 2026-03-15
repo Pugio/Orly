@@ -36,9 +36,11 @@ def render_graph(
     fig.patch.set_facecolor("black")
     ax.set_facecolor("black")
 
-    # Evaluate expression
+    # Evaluate expression — fix implicit multiplication (e.g. "7x" → "7*x")
+    import re
+    safe_expr = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', expression)
     x = np.linspace(x_range[0], x_range[1], 1000)
-    y = eval(expression, {"__builtins__": {}, "x": x, "np": np})
+    y = eval(safe_expr, {"__builtins__": {}, "x": x, "np": np})
 
     ax.plot(x, y, color="cyan", linewidth=3)
     ax.set_xlim(x_range)

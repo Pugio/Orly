@@ -170,7 +170,7 @@ async def localize_content(image_path: str, api_key: str) -> list[dict]:
     prompt = build_localization_prompt()
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=[
             {
                 "parts": [
@@ -199,6 +199,8 @@ def main():
                         help="Gemini API key")
     parser.add_argument("--output", type=str, default="poc4_output.png",
                         help="Output image path (default: poc4_output.png)")
+    parser.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270],
+                        help="Rotate image CW before sending to Gemini (default: 0)")
     args = parser.parse_args()
 
     # Load image
@@ -207,8 +209,24 @@ def main():
         print(f"Error: could not load image '{args.image}'")
         sys.exit(1)
 
+    # Rotate if needed
+    if args.rotate == 90:
+        image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    elif args.rotate == 180:
+        image = cv2.rotate(image, cv2.ROTATE_180)
+    elif args.rotate == 270:
+        image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+    if args.rotate:
+        # Save rotated image to a temp file for the API call
+        rotated_path = args.image.rsplit(".", 1)[0] + "_rotated.png"
+        cv2.imwrite(rotated_path, image)
+        api_image_path = rotated_path
+    else:
+        api_image_path = args.image
+
     # Run localization
-    detections = asyncio.run(localize_content(args.image, args.api_key))
+    detections = asyncio.run(localize_content(api_image_path, args.api_key))
 
     if not detections:
         print("No content detected on the table.")
