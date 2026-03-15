@@ -10,12 +10,44 @@ def save_session_state(session_store, overlay_state, scene_order) -> None:
 
 
 def restore_session_state(session_store, overlay_manager, overlay_state) -> int:
-    """Restore saved session state. Returns number of overlays restored."""
+    """Restore saved session state. Returns number of overlays restored.
+
+    Re-renders non-image overlays from saved data. Image overlays are
+    restored from disk via session_store.load_image().
+    """
     state = session_store.load_overlay_state()
     if not state:
         return 0
     overlays = state.get("overlays", [])
-    return len(overlays)
+    restored = 0
+    for entry in overlays:
+        name = entry.get("name", "")
+        content_type = entry.get("content_type", "")
+        placement = entry.get("placement", [0, 0, 1000, 1000])
+        title = entry.get("title", "")
+        data = entry.get("data", {})
+
+        if content_type == "image":
+            img = session_store.load_image(name)
+            if img is not None:
+                overlay_manager.scenes[title] = img
+                overlay_manager._show_overlay(img, placement, content_type)
+                restored += 1
+        else:
+            overlay_manager.handle_tool_result("project_overlay", {
+                "content_type": content_type,
+                "placement": placement,
+                "title": title,
+                "data": data,
+            })
+            restored += 1
+
+    # Restore scene order
+    scene_order = session_store.load_scene_order()
+    if scene_order:
+        overlay_manager._scene_order = scene_order
+
+    return restored
 
 
 class DebouncedSaver:

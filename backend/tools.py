@@ -13,7 +13,7 @@ def project_overlay(
 
     Args:
         content_type: Type of visual — "graph", "annotation", "highlight", "markdown",
-              "image", "number_line", "geometry", "chemistry", or "steps".
+              "image", "number_line", "geometry", "chemistry", "steps", or "flashcard".
         placement: Where to place it on the table, [ymin, xmin, ymax, xmax] normalised 0-1000.
                    Choose empty space near relevant content. Never overlap existing work.
                    For markdown and annotation, use a LARGE box (at least 500 units wide
@@ -37,6 +37,7 @@ def project_overlay(
               scene", "make it more colorful", "now show the next page of the story").
               "reference_scene": "Scene 1" to use a specific named scene as reference
               instead of the most recent image. The name must match a previous title.
+              For "flashcard": {"front": "What is 2+2?", "back": "4", "show_back": false}.
 
     Returns:
         dict with status of the projection.

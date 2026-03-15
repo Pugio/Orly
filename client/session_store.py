@@ -94,10 +94,17 @@ class SessionStore:
             json.dump(data, f, indent=2)
 
     def save_overlay_state(self, state: dict) -> None:
-        """Save overlay state dict to session/state.json."""
+        """Save overlay state dict to session/state.json.
+
+        Replaces existing overlay keys (preserves scene_order).
+        """
         existing = self._read_state_file()
-        existing.update(state)
-        self._write_state_file(existing)
+        # Preserve scene_order if present, replace everything else
+        scene_order = existing.get("scene_order")
+        new_data = dict(state)
+        if scene_order is not None:
+            new_data["scene_order"] = scene_order
+        self._write_state_file(new_data)
 
     def load_overlay_state(self) -> dict:
         """Load overlay state from session/state.json. Returns {} if missing."""

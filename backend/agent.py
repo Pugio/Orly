@@ -51,6 +51,7 @@ OVERLAY CONTENT TYPES — choose the right one:
 - "number_line": For showing a number line with points and ranges. data: {"min_val": -5, "max_val": 5, "points": [{"value": 2, "label": "x", "color": "#00ff00"}], "ranges": [{"start": -1, "end": 3, "color": "#ffff00", "label": "solution set"}]}.
 - "geometry": For geometric constructions — points, lines, circles, arcs, angles. data: {"elements": [{"type": "point", "pos": [3, 4], "label": "A"}, {"type": "line", "from": [0, 0], "to": [3, 4]}, {"type": "circle", "center": [0, 0], "radius": 5}], "x_range": [-6, 6], "y_range": [-6, 6], "show_grid": true}.
 - "chemistry": For simple molecular structure diagrams. data: {"atoms": [{"symbol": "O", "pos": [0, 0]}, {"symbol": "H", "pos": [-1, -0.5]}], "bonds": [{"from": 0, "to": 1, "order": 1}]}.
+- "flashcard": For flashcard-style Q&A cards. data: {"front": "What is 2+2?", "back": "4", "show_back": false}. Use `flip_flashcard` to reveal the answer.
 
 SPATIAL AWARENESS:
 - The table surface uses a 0-1000 normalised coordinate system.

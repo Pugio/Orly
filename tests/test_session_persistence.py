@@ -100,12 +100,14 @@ def test_restore_session_state_returns_overlay_count(store):
                 "content_type": "graph",
                 "placement": [0, 0, 500, 500],
                 "title": "My Graph",
+                "data": {"expression": "x"},
             },
             {
                 "name": "hint",
-                "content_type": "text",
+                "content_type": "annotation",
                 "placement": [500, 0, 1000, 500],
                 "title": "Hint",
+                "data": {"text": "hello"},
             },
         ],
         "count": 2,
@@ -117,6 +119,8 @@ def test_restore_session_state_returns_overlay_count(store):
 
     count = restore_session_state(store, overlay_manager, overlay_state)
     assert count == 2
+    # Verify handle_tool_result was called for each non-image overlay
+    assert overlay_manager.handle_tool_result.call_count == 2
 
 
 def test_restore_session_state_empty(store):

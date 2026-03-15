@@ -341,6 +341,7 @@ async def main(args: argparse.Namespace | None = None):
             data = result.get("data", {})
             if content_type != "image":  # images register async after generation
                 try:
+                    placement = overlay_manager._unrotate_placement(placement)
                     adjusted = OverlayManager.adjust_text_placement(
                         content_type, placement)
                     # Use the cached rendered overlay instead of re-rendering.

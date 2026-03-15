@@ -86,5 +86,5 @@ class TestRegistryIntegration:
         from client.renderer.registry import valid_types
         # The registry should contain at least all the types the tool validates.
         expected = {"graph", "annotation", "highlight", "markdown", "image",
-                    "number_line", "steps", "geometry", "chemistry"}
+                    "number_line", "steps", "geometry", "chemistry", "flashcard"}
         assert valid_types() >= expected
