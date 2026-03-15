@@ -1,5 +1,7 @@
 """Overlay projection tool for the Lumi tutor agent."""
 
+from client.renderer.registry import valid_types as _registry_valid_types
+
 
 def project_overlay(
     content_type: str,
@@ -39,7 +41,7 @@ def project_overlay(
     Returns:
         dict with status of the projection.
     """
-    _VALID_TYPES = {"graph", "annotation", "highlight", "markdown", "image", "number_line", "steps", "geometry", "chemistry"}
+    _VALID_TYPES = _registry_valid_types()
 
     # Validate content_type.
     if content_type not in _VALID_TYPES:
@@ -219,6 +221,21 @@ def refresh_view(reason: str) -> dict:
         "status": "refreshing",
         "reason": reason,
         "description": "Overlays temporarily hidden. Next frame will be a fresh clean view.",
+    }
+
+
+def flip_flashcard(overlay_name: str) -> dict:
+    """Flip a flashcard overlay to show the other side.
+
+    Args:
+        overlay_name: Name of the flashcard overlay to flip.
+
+    Returns:
+        dict with status of the flip.
+    """
+    return {
+        "status": "flipping",
+        "overlay_name": overlay_name,
     }
 
 

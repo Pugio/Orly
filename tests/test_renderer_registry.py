@@ -7,7 +7,7 @@ import pytest
 # All renderer types that should be discovered (image is registered but special-cased).
 _EXPECTED_TYPES = {
     "graph", "annotation", "highlight", "markdown", "image",
-    "number_line", "geometry", "chemistry", "steps",
+    "number_line", "geometry", "chemistry", "steps", "flashcard",
 }
 
 # Minimal valid data dicts for each renderer type (for smoke-testing render calls).
@@ -20,12 +20,14 @@ _MINIMAL_DATA = {
     "geometry": {"elements": [], "x_range": [-5, 5], "y_range": [-5, 5]},
     "chemistry": {"atoms": [{"symbol": "H", "pos": [0, 0]}], "bonds": []},
     "steps": {"steps": [{"title": "S1", "content": "c"}], "visible_count": 1},
+    "flashcard": {"front": "Q", "back": "A", "show_back": False},
 }
 
 
 class TestRegistryDiscovery:
     def test_registry_discovers_all_existing_renderers(self):
-        from client.renderer.registry import all_specs
+        from client.renderer.registry import all_specs, _REGISTRY
+        _REGISTRY.clear()  # force re-discovery
         names = {s["name"] for s in all_specs()}
         assert names == _EXPECTED_TYPES
 

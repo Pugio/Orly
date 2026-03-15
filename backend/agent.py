@@ -15,6 +15,7 @@ from typing import Any, Callable, get_type_hints
 
 from backend.tools import (
     advance_step,
+    flip_flashcard,
     get_overlay_state,
     list_programs,
     project_overlay,
@@ -263,6 +264,7 @@ _TOOL_FUNCTIONS: list[Callable] = [
     list_programs,
     get_overlay_state,
     advance_step,
+    flip_flashcard,
 ]
 
 TOOL_DECLARATIONS: list[dict] = [function_to_declaration(f) for f in _TOOL_FUNCTIONS]
