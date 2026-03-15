@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from client.renderer.markdown import render_markdown
+from client.renderer.markdown import _render_markdown_public as _render_md
 
 
-def render_steps(
+def _render_steps_impl(
     steps: list[dict],
     visible_count: int,
     width: int,
@@ -45,9 +45,27 @@ def render_steps(
         content = step.get("content", "")
         md_text = f"## {title}\n\n{content}"
 
-        rendered = render_markdown(md_text, width, step_height)
+        rendered = _render_md(md_text, width, step_height)
         y_start = i * step_height
         y_end = y_start + step_height
         img[y_start:y_end, :, :] = rendered
 
     return img
+
+
+def render_steps(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render steps from data dict."""
+    return _render_steps_impl(
+        data.get("steps", []),
+        data.get("visible_count", 0),
+        width, height,
+    )
+
+
+SPEC = {
+    "name": "steps",
+    "description": "Multi-step explanations that reveal one step at a time.",
+    "data_format": '{"steps": [{"title": "Step 1", "content": "..."}, ...], "visible_count": 1}.',
+    "prompt_hint": "After projecting, use advance_step to reveal each step.",
+    "render": render_steps,
+}

@@ -13,15 +13,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from client.renderer.graph import render_graph
-from client.renderer.annotation import render_annotation
-from client.renderer.highlight import render_highlight
-from client.renderer.markdown import render_markdown
 from client.renderer.image import render_image, render_loading
-from client.renderer.number_line import render_number_line
-from client.renderer.geometry import render_geometry
-from client.renderer.chemistry import render_chemistry
-from client.renderer.steps import render_steps
+from client.renderer.registry import get as get_renderer_spec
 
 
 class OverlayManager:
@@ -205,55 +198,12 @@ class OverlayManager:
         overlay_w = max(1, int(w_frac * self.proj_width))
         overlay_h = max(1, int(h_frac * self.proj_height))
 
-        if content_type == "graph":
-            expression = data.get("expression", "x")
-            x_range = data.get("x_range", [-10, 10])
-            y_range = data.get("y_range", [-10, 10])
-            return render_graph(expression, x_range, y_range, overlay_w, overlay_h)
+        spec = get_renderer_spec(content_type)
+        if spec:
+            return spec["render"](data, overlay_w, overlay_h, title=title)
 
-        elif content_type == "annotation":
-            text = data.get("text", title)
-            return render_annotation(text, overlay_w, overlay_h)
-
-        elif content_type == "markdown":
-            text = data.get("text", title)
-            return render_markdown(text, overlay_w, overlay_h)
-
-        elif content_type == "image":
-            prompt = data.get("prompt", title)
-            return render_image(prompt, overlay_w, overlay_h)
-
-        elif content_type == "highlight":
-            color_hex = data.get("color", "#00ffff")
-            # render_highlight returns BGRA; convert to BGR for canvas compositing
-            bgra = render_highlight(overlay_w, overlay_h, color_hex=color_hex)
-            return bgra[:, :, :3]
-
-        elif content_type == "number_line":
-            return render_number_line(
-                data.get("min_val", 0), data.get("max_val", 10),
-                data.get("points", []), data.get("ranges", []),
-                overlay_w, overlay_h)
-
-        elif content_type == "geometry":
-            return render_geometry(
-                data.get("elements", []),
-                data.get("x_range", [-10, 10]), data.get("y_range", [-10, 10]),
-                overlay_w, overlay_h, data.get("show_grid", False))
-
-        elif content_type == "chemistry":
-            return render_chemistry(
-                data.get("atoms", []), data.get("bonds", []),
-                overlay_w, overlay_h, data.get("title", title))
-
-        elif content_type == "steps":
-            steps = data.get("steps", [])
-            visible = data.get("visible_count", 0)
-            return render_steps(steps, visible, overlay_w, overlay_h)
-
-        else:
-            # Unknown type: return black image
-            return np.zeros((overlay_h, overlay_w, 3), dtype=np.uint8)
+        # Unknown type: return black image
+        return np.zeros((overlay_h, overlay_w, 3), dtype=np.uint8)
 
     def place_on_canvas(
         self,

@@ -1,7 +1,7 @@
 """Tests for number line renderer."""
 
 import numpy as np
-from client.renderer.number_line import render_number_line
+from client.renderer.number_line import _render_number_line_impl as render_number_line
 
 
 def test_number_line_output_shape():

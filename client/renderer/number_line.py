@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def render_number_line(
+def _render_number_line_impl(
     min_val: float,
     max_val: float,
     points: list[dict],
@@ -101,3 +101,25 @@ def render_number_line(
         img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
 
     return img
+
+
+def render_number_line(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render number line from data dict."""
+    return _render_number_line_impl(
+        data.get("min_val", 0), data.get("max_val", 10),
+        data.get("points", []), data.get("ranges", []),
+        width, height,
+    )
+
+
+SPEC = {
+    "name": "number_line",
+    "description": "A number line with labeled points and shaded ranges.",
+    "data_format": (
+        '{"min_val": -5, "max_val": 5, '
+        '"points": [{"value": 2, "label": "x", "color": "#00ff00"}], '
+        '"ranges": [{"start": -1, "end": 3, "color": "#ffff00", "label": "solution set"}]}.'
+    ),
+    "prompt_hint": "Use for arithmetic, inequalities, fractions, or any 1D numeric visualization.",
+    "render": render_number_line,
+}

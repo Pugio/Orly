@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from client.renderer.graph import render_graph
-from client.renderer.annotation import render_annotation
-from client.renderer.highlight import render_highlight
+from client.renderer.graph import _render_graph_impl as render_graph
+from client.renderer.annotation import _render_annotation_impl as render_annotation
+from client.renderer.highlight import _render_highlight_impl as render_highlight
 
 
 # ---------------------------------------------------------------------------

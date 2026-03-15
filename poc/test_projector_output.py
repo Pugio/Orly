@@ -11,9 +11,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import cv2
 import numpy as np
 from client.display import show_on_projector, get_projector_resolution
-from client.renderer.graph import render_graph
-from client.renderer.annotation import render_annotation
-from client.renderer.highlight import render_highlight
+from client.renderer.graph import _render_graph_impl as render_graph
+from client.renderer.annotation import _render_annotation_impl as render_annotation
+from client.renderer.highlight import _render_highlight_impl as render_highlight
 
 
 def main():

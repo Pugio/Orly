@@ -1,5 +1,5 @@
 import numpy as np
-from client.renderer.chemistry import render_chemistry, ELEMENT_COLORS
+from client.renderer.chemistry import _render_chemistry_impl as render_chemistry, ELEMENT_COLORS
 
 
 def test_chemistry_output_shape():

@@ -20,10 +20,10 @@ from client.camera import (
     rectify_frame,
 )
 from client.overlay_manager import OverlayManager
-from client.renderer.annotation import render_annotation
-from client.renderer.graph import render_graph
-from client.renderer.highlight import render_highlight
-from client.renderer.markdown import render_markdown
+from client.renderer.annotation import _render_annotation_impl as render_annotation
+from client.renderer.graph import _render_graph_impl as render_graph
+from client.renderer.highlight import _render_highlight_impl as render_highlight
+from client.renderer.markdown import _render_markdown_public as render_markdown
 from calibration.projector_calibrate import (
     compute_projector_homography,
     table_to_projector,

@@ -22,7 +22,7 @@ ELEMENT_COLORS = {
 _DEFAULT_COLOR = "#CCCCCC"
 
 
-def render_chemistry(
+def _render_chemistry_impl(
     atoms: list[dict],
     bonds: list[dict],
     width: int,
@@ -125,3 +125,23 @@ def render_chemistry(
     if img.shape[0] != height or img.shape[1] != width:
         img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
     return img
+
+
+def render_chemistry(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render chemistry from data dict."""
+    return _render_chemistry_impl(
+        data.get("atoms", []), data.get("bonds", []),
+        width, height, title,
+    )
+
+
+SPEC = {
+    "name": "chemistry",
+    "description": "Simple molecular structure diagrams with atoms and bonds.",
+    "data_format": (
+        '{"atoms": [{"symbol": "O", "pos": [0, 0]}, {"symbol": "H", "pos": [-1, -0.5]}], '
+        '"bonds": [{"from": 0, "to": 1, "order": 1}]}.'
+    ),
+    "prompt_hint": "Use for molecular structure diagrams.",
+    "render": render_chemistry,
+}

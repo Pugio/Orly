@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def render_geometry(
+def _render_geometry_impl(
     elements: list[dict],
     x_range: list[float],
     y_range: list[float],
@@ -133,3 +133,28 @@ def render_geometry(
         img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
 
     return img
+
+
+def render_geometry(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render geometry from data dict."""
+    return _render_geometry_impl(
+        data.get("elements", []),
+        data.get("x_range", [-10, 10]),
+        data.get("y_range", [-10, 10]),
+        width, height,
+        data.get("show_grid", False),
+    )
+
+
+SPEC = {
+    "name": "geometry",
+    "description": "Geometric constructions — points, lines, circles, arcs, angles.",
+    "data_format": (
+        '{"elements": [{"type": "point", "pos": [3, 4], "label": "A"}, '
+        '{"type": "line", "from": [0, 0], "to": [3, 4]}, '
+        '{"type": "circle", "center": [0, 0], "radius": 5}], '
+        '"x_range": [-6, 6], "y_range": [-6, 6], "show_grid": true}.'
+    ),
+    "prompt_hint": "Use for geometric constructions with points, lines, circles, arcs.",
+    "render": render_geometry,
+}

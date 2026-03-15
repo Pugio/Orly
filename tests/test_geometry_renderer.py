@@ -1,5 +1,5 @@
 import numpy as np
-from client.renderer.geometry import render_geometry
+from client.renderer.geometry import _render_geometry_impl as render_geometry
 
 
 def test_geometry_output_shape():

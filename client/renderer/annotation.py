@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 
-def render_annotation(
+def _render_annotation_impl(
     text: str,
     width: int,
     height: int,
@@ -62,3 +62,17 @@ def render_annotation(
         y += line_height + line_spacing
 
     return img
+
+
+def render_annotation(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render annotation from data dict."""
+    return _render_annotation_impl(data.get("text", title), width, height)
+
+
+SPEC = {
+    "name": "annotation",
+    "description": "Short single-line text label.",
+    "data_format": '{"text": "Label text here"}.',
+    "prompt_hint": "Use for short single-line text labels.",
+    "render": render_annotation,
+}

@@ -182,7 +182,7 @@ def _wrap_segments(segments: list[dict], max_chars: int) -> list[list[dict]]:
     ]
 
 
-def render_markdown(
+def _render_markdown_public(
     text: str,
     width: int,
     height: int,
@@ -209,11 +209,11 @@ def render_markdown(
         # plain text annotation so the client never crashes.
         import logging
         logging.getLogger(__name__).warning("Falling back to annotation: %s", e)
-        from client.renderer.annotation import render_annotation
+        from client.renderer.annotation import _render_annotation_impl
         # Strip all markdown/LaTeX for the fallback
         plain = re.sub(r'[#*$`]', '', text)
         plain = re.sub(r'\\[a-zA-Z]+', '', plain)
-        return render_annotation(plain.strip(), width, height)
+        return _render_annotation_impl(plain.strip(), width, height)
 
 
 def _render_markdown_impl(text: str, width: int, height: int) -> np.ndarray:
@@ -294,3 +294,17 @@ def _render_markdown_impl(text: str, width: int, height: int) -> np.ndarray:
         result = cv2.resize(result, (width, height), interpolation=cv2.INTER_AREA)
 
     return result
+
+
+def render_markdown(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render markdown from data dict."""
+    return _render_markdown_public(data.get("text", title), width, height)
+
+
+SPEC = {
+    "name": "markdown",
+    "description": "Multi-step text with headers, bold, bullets, and math notation.",
+    "data_format": '{"text": "# Step 1\\n\\nFactor: $x^2+3x+2 = (x+1)(x+2)$\\n\\n- Root 1: **x = -1**"}.',
+    "prompt_hint": "Prefer markdown over annotation for multi-step explanations.",
+    "render": render_markdown,
+}

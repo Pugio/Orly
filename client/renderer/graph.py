@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def render_graph(
+def _render_graph_impl(
     expression: str,
     x_range: list[float],
     y_range: list[float],
@@ -75,3 +75,22 @@ def render_graph(
         img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
 
     return img
+
+
+def render_graph(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render graph from data dict."""
+    return _render_graph_impl(
+        data.get("expression", "x"),
+        data.get("x_range", [-10, 10]),
+        data.get("y_range", [-10, 10]),
+        width, height,
+    )
+
+
+SPEC = {
+    "name": "graph",
+    "description": "A mathematical function plot y=f(x).",
+    "data_format": '{"expression": "x**2 - 3*x + 2", "x_range": [-5, 5], "y_range": [-5, 10]}.',
+    "prompt_hint": "Use ONLY for plotting a single function y=f(x).",
+    "render": render_graph,
+}

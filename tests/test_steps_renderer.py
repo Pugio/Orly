@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from client.renderer.steps import render_steps
+from client.renderer.steps import _render_steps_impl as render_steps
 
 
 class TestRenderSteps:

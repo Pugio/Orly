@@ -185,5 +185,25 @@ def render_image(
 
 def _fallback(text: str, width: int, height: int) -> np.ndarray:
     """Render a text fallback when image generation fails."""
-    from client.renderer.annotation import render_annotation
-    return render_annotation(text, width, height)
+    from client.renderer.annotation import _render_annotation_impl
+    return _render_annotation_impl(text, width, height)
+
+
+def _render_image_registry(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper. Returns loading placeholder (actual gen is async)."""
+    return render_loading(data.get("prompt", title), width, height)
+
+
+SPEC = {
+    "name": "image",
+    "description": "AI-generated image projected onto the table.",
+    "data_format": (
+        '{"prompt": "a labeled unit circle", "style": "technical", '
+        '"include_view": true, "reference_previous": false}.'
+    ),
+    "prompt_hint": (
+        'Use when the child asks to generate, draw, or show a picture. '
+        'Styles: "default", "technical" (black bg), "creative" (colorful).'
+    ),
+    "render": _render_image_registry,
+}

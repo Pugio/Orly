@@ -8,7 +8,7 @@ from client.renderer.markdown import (
     _parse_markdown,
     _sanitize_latex,
     _wrap_segments,
-    render_markdown,
+    _render_markdown_public as render_markdown,
 )
 
 

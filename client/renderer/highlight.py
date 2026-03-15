@@ -3,7 +3,7 @@
 import numpy as np
 
 
-def render_highlight(
+def _render_highlight_impl(
     width: int,
     height: int,
     color_hex: str = "#00ffff",
@@ -33,3 +33,18 @@ def render_highlight(
     img[:, :, 3] = int(alpha * 255)  # Alpha channel
 
     return img
+
+
+def render_highlight(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
+    """Registry-compatible wrapper: render highlight, returns BGR (alpha stripped)."""
+    bgra = _render_highlight_impl(width, height, color_hex=data.get("color", "#00ffff"))
+    return bgra[:, :, :3]
+
+
+SPEC = {
+    "name": "highlight",
+    "description": "Semi-transparent colored highlight rectangle.",
+    "data_format": '{"color": "#00ffff"}.',
+    "prompt_hint": "Use to highlight a region on the child\'s work.",
+    "render": render_highlight,
+}
