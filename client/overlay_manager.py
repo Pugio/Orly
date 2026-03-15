@@ -58,6 +58,13 @@ class OverlayManager:
         #     print(f"[OverlayManager] Un-rotated {original} -> {placement}")
 
         overlay = self.render_overlay(content_type, placement, title, data)
+
+        # Flip overlay content for projector orientation.
+        # The projector projects from behind the mat, so content appears
+        # flipped from the viewer's perspective. Rotate 180° to compensate.
+        if self.mode == "projector" and content_type != "highlight":
+            overlay = cv2.rotate(overlay, cv2.ROTATE_180)
+
         self.canvas = self.place_on_canvas(overlay, placement)
 
         # Debug: save canvas and log
