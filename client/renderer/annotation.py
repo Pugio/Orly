@@ -8,7 +8,7 @@ def render_annotation(
     text: str,
     width: int,
     height: int,
-    font_scale: float = 1.0,
+    font_scale: float = 2.0,
     color: tuple = (0, 255, 255),
 ) -> np.ndarray:
     """Render text on a black background with word wrapping.

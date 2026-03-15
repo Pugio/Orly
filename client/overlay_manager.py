@@ -5,12 +5,16 @@ In projector mode, uses H_proj to map table coordinates to projector pixels.
 In screen mode, maps Gemini's 0-1000 coordinate system directly to pixel space.
 """
 
+import threading
+
 import cv2
 import numpy as np
 
 from client.renderer.graph import render_graph
 from client.renderer.annotation import render_annotation
 from client.renderer.highlight import render_highlight
+from client.renderer.markdown import render_markdown
+from client.renderer.image import render_image, render_loading
 
 
 class OverlayManager:
@@ -30,19 +34,30 @@ class OverlayManager:
         proj_height: int = 720,
         mode: str = "screen",
         image_rotate: int = 0,
+        white_bg: bool = False,
     ):
         self.H_proj = H_proj
         self.proj_width = proj_width
         self.proj_height = proj_height
         self.mode = mode
         self.image_rotate = image_rotate  # how the image was rotated before Gemini saw it
-        self.canvas = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
+        self.white_bg = white_bg
+        self.canvas = self._make_bg()
+        # Named scene gallery: title → BGR numpy array.
+        self.scenes: dict[str, np.ndarray] = {}
+        # Ordered list of scene names for "reference_previous".
+        self._scene_order: list[str] = []
+        # Set by refresh_view to temporarily hide overlays for a clean capture.
+        self._refresh_requested = False
+        self._saved_canvas = None  # stashed canvas during refresh
+        # Last clean frame (JPEG bytes) captured by video_loop.
+        self.last_clean_frame: bytes | None = None
 
     def handle_tool_result(self, name: str, result: dict):
-        """Process a tool result from the backend and render the overlay.
-
-        Only handles 'project_overlay' tool results. Other tools are ignored.
-        """
+        """Process a tool result from the backend and render the overlay."""
+        if name == "show_scene":
+            self._handle_show_scene(result)
+            return
         if name != "project_overlay":
             return
 
@@ -57,17 +72,103 @@ class OverlayManager:
         #     placement = self._unrotate_placement(placement)
         #     print(f"[OverlayManager] Un-rotated {original} -> {placement}")
 
-        overlay = self.render_overlay(content_type, placement, title, data)
+        # Enforce minimum placement size for text-heavy content types so
+        # they remain readable on a low-res projector.
+        if content_type in ("markdown", "annotation"):
+            y_min, x_min, y_max, x_max = placement
+            min_w, min_h = 500, 400
+            if (x_max - x_min) < min_w:
+                x_max = min(1000, x_min + min_w)
+                if (x_max - x_min) < min_w:
+                    x_min = max(0, x_max - min_w)
+            if (y_max - y_min) < min_h:
+                y_max = min(1000, y_min + min_h)
+                if (y_max - y_min) < min_h:
+                    y_min = max(0, y_max - min_h)
+            placement = [y_min, x_min, y_max, x_max]
 
-        # Flip overlay content for projector orientation.
-        # The projector projects from behind the mat, so content appears
-        # flipped from the viewer's perspective. Rotate 180° to compensate.
+        if content_type == "image":
+            # Image generation is slow — show loading placeholder immediately,
+            # then generate in a background thread and swap in the result.
+            self._show_overlay(
+                render_loading(data.get("prompt", title),
+                               *self._placement_pixel_size(placement)),
+                placement, content_type,
+            )
+            print(f"[OverlayManager] Generating image at {placement}...")
+            thread = threading.Thread(
+                target=self._generate_image_async,
+                args=(placement, title, data),
+                daemon=True,
+            )
+            thread.start()
+            return
+
+        overlay = self.render_overlay(content_type, placement, title, data)
+        self._show_overlay(overlay, placement, content_type)
+        print(f"[OverlayManager] Rendered {content_type} at {placement}")
+
+    def _show_overlay(self, overlay: np.ndarray, placement: list, content_type: str):
+        """Apply projector flip and place overlay on canvas."""
         if self.mode == "projector" and content_type != "highlight":
             overlay = cv2.rotate(overlay, cv2.ROTATE_180)
-
         self.canvas = self.place_on_canvas(overlay, placement)
 
-        print(f"[OverlayManager] Rendered {content_type} at {placement}")
+    def _placement_pixel_size(self, placement: list) -> tuple[int, int]:
+        """Return (width, height) in pixels for a placement box."""
+        y_min, x_min, y_max, x_max = placement
+        w = max(1, int((x_max - x_min) / 1000.0 * self.proj_width))
+        h = max(1, int((y_max - y_min) / 1000.0 * self.proj_height))
+        return w, h
+
+    def _generate_image_async(self, placement: list, title: str, data: dict):
+        """Background thread: generate image and swap onto canvas."""
+        try:
+            w, h = self._placement_pixel_size(placement)
+            prompt = data.get("prompt", title)
+            style = data.get("style", "default")
+            include_view = data.get("include_view", False)
+            reference_previous = data.get("reference_previous", False)
+            reference_scene = data.get("reference_scene", "")
+
+            ref_frame = None
+            if reference_scene and reference_scene in self.scenes:
+                ref_frame = self.scenes[reference_scene]
+                print(f"[OverlayManager] Using scene '{reference_scene}' as reference")
+            elif reference_previous and self._scene_order:
+                last_name = self._scene_order[-1]
+                ref_frame = self.scenes[last_name]
+                print(f"[OverlayManager] Using previous scene '{last_name}' as reference")
+            elif include_view and self.last_clean_frame:
+                frame_bytes = np.frombuffer(self.last_clean_frame, dtype=np.uint8)
+                ref_frame = cv2.imdecode(frame_bytes, cv2.IMREAD_COLOR)
+
+            overlay = render_image(prompt, w, h, reference_frame=ref_frame, style=style)
+
+            # Save to scene gallery by title.
+            self.scenes[title] = overlay.copy()
+            if title not in self._scene_order:
+                self._scene_order.append(title)
+            print(f"[OverlayManager] Image '{title}' ready "
+                  f"(scenes: {list(self.scenes.keys())})")
+
+            self._show_overlay(overlay, placement, "image")
+        except Exception as e:
+            print(f"[OverlayManager] Image generation failed: {e}")
+
+    def _handle_show_scene(self, result: dict):
+        """Show a previously generated scene on the projector."""
+        scene_name = result.get("scene_name", "")
+        placement = list(result.get("placement", [0, 0, 1000, 1000]))
+
+        if scene_name not in self.scenes:
+            print(f"[OverlayManager] Scene '{scene_name}' not found. "
+                  f"Available: {list(self.scenes.keys())}")
+            return
+
+        overlay = self.scenes[scene_name]
+        self._show_overlay(overlay, placement, "image")
+        print(f"[OverlayManager] Showing scene '{scene_name}'")
 
     def render_overlay(
         self,
@@ -105,6 +206,14 @@ class OverlayManager:
             text = data.get("text", title)
             return render_annotation(text, overlay_w, overlay_h)
 
+        elif content_type == "markdown":
+            text = data.get("text", title)
+            return render_markdown(text, overlay_w, overlay_h)
+
+        elif content_type == "image":
+            prompt = data.get("prompt", title)
+            return render_image(prompt, overlay_w, overlay_h)
+
         elif content_type == "highlight":
             color_hex = data.get("color", "#00ffff")
             # render_highlight returns BGRA; convert to BGR for canvas compositing
@@ -134,8 +243,6 @@ class OverlayManager:
         use_direct = True  # default to direct screen mapping
 
         if self.mode == "projector" and self.H_proj is not None:
-            # Map the four corners of the placement rectangle through H_proj.
-            # Map placement rectangle corners through H_proj.
             src_corners = np.array([
                 [y_min, x_min],
                 [y_max, x_min],
@@ -145,22 +252,29 @@ class OverlayManager:
             dst_corners = cv2.perspectiveTransform(src_corners, self.H_proj)
             dst_corners = dst_corners.reshape(4, 2)
 
-            # Get bounding box in projector pixels
+            # H_proj was calibrated with [y,x] input and the output was
+            # originally consumed as column 0=x, column 1=y.  The
+            # calibration baked in that convention, so we keep it:
+            # column 0 = projector x, column 1 = projector y.
             px_min = max(0, int(dst_corners[:, 0].min()))
             py_min = max(0, int(dst_corners[:, 1].min()))
             px_max = min(self.proj_width, int(dst_corners[:, 0].max()))
             py_max = min(self.proj_height, int(dst_corners[:, 1].max()))
+            print(f"[OverlayManager] H_proj: table [{y_min},{x_min}]->[{y_max},{x_max}] "
+                  f"=> projector x:{px_min}-{px_max}, y:{py_min}-{py_max}")
 
             if px_max > px_min and py_max > py_min:
-                resized = cv2.resize(overlay, (px_max - px_min, py_max - py_min))
-                canvas[py_min:py_max, px_min:px_max] = resized
+                w, h = px_max - px_min, py_max - py_min
+                print(f"  placing {w}x{h} at canvas[{py_min}:{py_max}, {px_min}:{px_max}] "
+                      f"(canvas is {self.proj_height}x{self.proj_width})")
+                resized = cv2.resize(overlay, (w, h))
+                self._composite(canvas, resized, py_min, py_max, px_min, px_max)
                 use_direct = False
             else:
                 print(f"[OverlayManager] WARNING: H_proj mapped outside bounds, "
                       f"falling back to direct mapping")
 
         if use_direct:
-            # Screen mode: direct mapping from 0-1000 to pixel coords
             px_min = max(0, int(x_min / 1000.0 * self.proj_width))
             py_min = max(0, int(y_min / 1000.0 * self.proj_height))
             px_max = min(self.proj_width, int(x_max / 1000.0 * self.proj_width))
@@ -168,9 +282,24 @@ class OverlayManager:
 
             if px_max > px_min and py_max > py_min:
                 resized = cv2.resize(overlay, (px_max - px_min, py_max - py_min))
-                canvas[py_min:py_max, px_min:px_max] = resized
+                self._composite(canvas, resized, py_min, py_max, px_min, px_max)
 
         return canvas
+
+    def _composite(self, canvas: np.ndarray, overlay: np.ndarray,
+                   y1: int, y2: int, x1: int, x2: int) -> None:
+        """Place overlay onto canvas region, handling white background mode.
+
+        With black bg: direct overwrite (black is transparent to projector).
+        With white bg: only overwrite pixels where overlay has content
+        (non-black), so white background shows through elsewhere.
+        """
+        if self.white_bg:
+            mask = overlay.sum(axis=2) > 30  # non-black content
+            region = canvas[y1:y2, x1:x2]
+            region[mask] = overlay[mask]
+        else:
+            canvas[y1:y2, x1:x2] = overlay
 
     def _unrotate_placement(self, placement: list) -> list:
         """Un-rotate Gemini coordinates from rotated image back to marker space.
@@ -194,8 +323,31 @@ class OverlayManager:
 
         return placement
 
+    def _make_bg(self) -> np.ndarray:
+        """Create a blank background canvas."""
+        if self.white_bg:
+            return np.full(
+                (self.proj_height, self.proj_width, 3), 255, dtype=np.uint8
+            )
+        return np.zeros((self.proj_height, self.proj_width, 3), dtype=np.uint8)
+
+    def request_refresh(self):
+        """Request a clean frame capture. Hides overlays temporarily."""
+        if not self._refresh_requested:
+            self._saved_canvas = self.canvas.copy()
+            self.canvas = self._make_bg()
+            self._refresh_requested = True
+            print("[OverlayManager] Refresh requested — overlays hidden for capture.")
+
+    def complete_refresh(self):
+        """Restore overlays after clean frame was captured."""
+        if self._refresh_requested:
+            if self._saved_canvas is not None:
+                self.canvas = self._saved_canvas
+                self._saved_canvas = None
+            self._refresh_requested = False
+            print("[OverlayManager] Refresh complete — overlays restored.")
+
     def clear(self):
-        """Clear all overlays (reset canvas to black)."""
-        self.canvas = np.zeros(
-            (self.proj_height, self.proj_width, 3), dtype=np.uint8
-        )
+        """Clear all overlays (reset canvas to background)."""
+        self.canvas = self._make_bg()

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 
@@ -45,19 +46,63 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
 
     When overlays are active, sends the last clean frame instead of
     the live view (which would show the projected overlay on the paper).
+
+    When a refresh is requested, waits one frame for the projector to
+    go dark, captures a fresh clean frame, then restores overlays.
     """
     interval = 1.0 / fps
     frame_count = 0
     last_clean_frame = None
+    refresh_wait_frames = 0  # countdown after refresh request
+    loop = asyncio.get_event_loop()
     while True:
-        jpeg_bytes, _ = camera.get_rectified_frame()
-        if jpeg_bytes:
-            has_overlay = overlay_manager and np.any(overlay_manager.canvas > 0)
-            if has_overlay and last_clean_frame:
-                # Send cached clean frame so Gemini doesn't see its own overlay
+        # Run blocking camera capture in executor so it doesn't stall
+        # the event loop (audio send/receive must keep flowing).
+        jpeg_bytes, _ = await loop.run_in_executor(
+            None, camera.get_rectified_frame
+        )
+        if not jpeg_bytes:
+            frame_count += 1
+            await asyncio.sleep(interval)
+            continue
+        if True:
+            # Handle refresh_view cycle.
+            if overlay_manager and overlay_manager._refresh_requested:
+                if refresh_wait_frames == 0:
+                    # First frame after request — projector just went dark,
+                    # skip this frame (may still show overlay residue).
+                    refresh_wait_frames = 1
+                elif refresh_wait_frames == 1:
+                    # Second frame — projector is dark, capture is clean.
+                    last_clean_frame = jpeg_bytes
+                    overlay_manager.last_clean_frame = jpeg_bytes
+                    await client.send_video(jpeg_bytes)
+                    overlay_manager.complete_refresh()
+                    refresh_wait_frames = 0
+                    frame_count += 1
+                    await asyncio.sleep(interval)
+                    continue
+
+            # Check if overlays are active on the canvas.
+            has_content = False
+            if overlay_manager and not overlay_manager._refresh_requested:
+                if overlay_manager.white_bg:
+                    # White bg mode: content exists if any pixel is NOT white
+                    has_content = not np.all(overlay_manager.canvas == 255)
+                else:
+                    # Black bg mode: content exists if any pixel is NOT black
+                    has_content = np.any(overlay_manager.canvas > 0)
+
+            if has_content and last_clean_frame:
                 await client.send_video(last_clean_frame)
             else:
                 last_clean_frame = jpeg_bytes
+                if overlay_manager:
+                    overlay_manager.last_clean_frame = jpeg_bytes
+                with open("/tmp/tablelight_frame.jpg", "wb") as f:
+                    f.write(jpeg_bytes)
+                if overlay_manager:
+                    overlay_manager.last_clean_frame = jpeg_bytes
                 await client.send_video(jpeg_bytes)
             frame_count += 1
         await asyncio.sleep(interval)
@@ -79,7 +124,7 @@ async def audio_send_loop(audio_capture: AudioCapture, client: TableLightClient)
         if chunk:
             await client.send_audio(chunk)
         else:
-            await asyncio.sleep(0.01)  # avoid busy-wait
+            await asyncio.sleep(0.01)  # tight poll for low audio latency
 
 
 async def text_input_loop(client: TableLightClient):
@@ -187,6 +232,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=[0, 90, 180, 270],
         help="Rotate rectified image CW before sending to Gemini (default: 0)",
     )
+    parser.add_argument(
+        "--white-bg",
+        action="store_true",
+        help="Use white background instead of black (illuminates paper)",
+    )
     return parser.parse_args(argv)
 
 
@@ -210,7 +260,10 @@ async def main(args: argparse.Namespace | None = None):
     # --- Camera ---
     camera = CameraCapture(url=args.url, webcam=args.webcam, rotate=args.rotate)
     camera.start()
-    print("[TableLight] Camera started.")
+    # Flush stale frames from the MJPEG buffer so first capture is fresh.
+    for _ in range(10):
+        camera.get_rectified_frame()
+    print("[TableLight] Camera started (buffer flushed).")
 
     # --- Projector homography ---
     H_proj = None
@@ -227,6 +280,7 @@ async def main(args: argparse.Namespace | None = None):
         proj_height=proj_height,
         mode=args.mode,
         image_rotate=args.rotate,
+        white_bg=args.white_bg,
     )
     _shared_state["overlay_manager"] = overlay_manager
 
@@ -258,6 +312,8 @@ async def main(args: argparse.Namespace | None = None):
         print(f"[TableLight] Overlay projected: {content_type} — {title}")
         # Canvas is updated — main thread display loop will pick it up
 
+    _last_direction = {"value": None}
+
     async def on_transcript(direction: str, text: str):
         if not text or not text.strip():
             return
@@ -265,19 +321,25 @@ async def main(args: argparse.Namespace | None = None):
         stripped = text.strip()
         if stripped.startswith("**") and stripped.endswith("**"):
             return
-        if direction == "in":
-            print(f"[Student] {text}")
-        else:
-            print(f"[Lumi] {text}")
+        # Print label on direction change, then stream text inline
+        if direction != _last_direction["value"]:
+            label = "Student" if direction == "in" else "Lumi"
+            print(f"\n[{label}] ", end="", flush=True)
+            _last_direction["value"] = direction
+        print(text, end="", flush=True)
 
     async def on_interrupted():
         overlay_manager.clear()
         print("[TableLight] Interrupted — overlays cleared.")
 
+    async def on_refresh_view():
+        overlay_manager.request_refresh()
+
     client.on_audio(on_audio)
     client.on_tool_result(on_tool_result)
     client.on_transcript(on_transcript)
     client.on_interrupted(on_interrupted)
+    client.on_refresh_view(on_refresh_view)
 
     # --- Connect ---
     print(f"[TableLight] Connecting to backend at {args.backend} ...")
@@ -351,6 +413,10 @@ def run():
             print("[TableLight] Aborted.")
             return
         print("[TableLight] Projector verified.")
+        # Clear the test pattern immediately so the camera doesn't capture it.
+        black = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
+        show_on_projector("TableLight Overlay", black, fullscreen=True)
+        cv2.waitKey(500)  # give projector time to go dark
 
     # Start the async event loop in a background thread
     loop = asyncio.new_event_loop()
@@ -371,6 +437,19 @@ def run():
     win_name = "TableLight Overlay"
     print("[TableLight] Display loop running on main thread. Press Ctrl+C to quit.")
 
+    # Install SIGINT handler that forces exit on second Ctrl+C.
+    _interrupt_count = {"n": 0}
+    _original_sigint = signal.getsignal(signal.SIGINT)
+
+    def _sigint_handler(signum, frame):
+        _interrupt_count["n"] += 1
+        if _interrupt_count["n"] >= 2:
+            print("\n[TableLight] Force quit.")
+            os._exit(1)
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     frame_n = 0
     try:
         while async_thread.is_alive():
@@ -382,18 +461,22 @@ def run():
                 else:
                     show_on_laptop(win_name, canvas)
                 frame_n += 1
-            else:
-                pass
             cv2.waitKey(50)
     except KeyboardInterrupt:
-        print("\n[TableLight] Shutting down...")
+        print("\n[TableLight] Shutting down (Ctrl+C again to force quit)...")
     finally:
-        cv2.destroyAllWindows()
+        # Best-effort cleanup, then force exit.
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
         # Cancel async tasks
         for task in asyncio.all_tasks(loop):
             loop.call_soon_threadsafe(task.cancel)
-        async_thread.join(timeout=3)
+        async_thread.join(timeout=2)
         print("[TableLight] Shutdown complete.")
+        # Force exit to avoid hanging on stuck threads (PyAudio, OpenCV).
+        os._exit(0)
 
 
 # Shared state so the main thread can access overlay_manager created in async main()

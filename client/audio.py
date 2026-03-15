@@ -18,7 +18,7 @@ except (ImportError, OSError):
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
-CHUNK_SIZE = 1600  # 100ms of audio at 16kHz
+CHUNK_SIZE = 800  # 50ms of audio at 16kHz (lower = less latency)
 _FORMAT = pyaudio.paInt16 if _PA_AVAILABLE else 8  # paInt16 == 8
 
 
@@ -76,7 +76,10 @@ class AudioCapture:
 
 
 class AudioPlayer:
-    """Plays audio received from the backend."""
+    """Plays audio received from the backend.
+
+    Uses a background thread for playback so callers never block.
+    """
 
     def __init__(self, rate: int = 24000, channels: int = 1):
         # Gemini outputs 24kHz audio
@@ -84,9 +87,11 @@ class AudioPlayer:
         self.channels = channels
         self._pa = None
         self._stream = None
+        self._queue: queue.Queue[bytes] = queue.Queue()
+        self._thread = None
 
     def start(self):
-        """Open the output audio stream."""
+        """Open the output audio stream and start playback thread."""
         if not _PA_AVAILABLE:
             raise RuntimeError("PyAudio is not available — cannot play audio")
         self._pa = pyaudio.PyAudio()
@@ -96,14 +101,32 @@ class AudioPlayer:
             rate=self.rate,
             output=True,
         )
+        import threading
+        self._thread = threading.Thread(target=self._playback_loop, daemon=True)
+        self._thread.start()
+
+    def _playback_loop(self):
+        """Background thread: drain queue and write to audio stream."""
+        while True:
+            try:
+                pcm_bytes = self._queue.get(timeout=0.5)
+                if pcm_bytes is None:  # poison pill
+                    return
+                if self._stream:
+                    self._stream.write(pcm_bytes)
+            except queue.Empty:
+                continue
 
     def play(self, pcm_bytes: bytes):
-        """Play audio bytes (blocking write to output stream)."""
-        if self._stream:
-            self._stream.write(pcm_bytes)
+        """Queue audio bytes for playback (non-blocking)."""
+        self._queue.put(pcm_bytes)
 
     def stop(self):
         """Stop playback and release resources."""
+        if self._thread:
+            self._queue.put(None)  # poison pill
+            self._thread.join(timeout=2)
+            self._thread = None
         if self._stream:
             self._stream.stop_stream()
             self._stream.close()

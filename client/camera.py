@@ -156,17 +156,31 @@ class CameraCapture:
         if self.url:
             stream_url = f"{self.url.rstrip('/')}/video"
             self.cap = cv2.VideoCapture(stream_url)
+            if not self.cap.isOpened():
+                raise RuntimeError(f"Failed to open video stream: {stream_url}")
+            # Set small buffer size to reduce frame staleness.
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         elif self.webcam is not None:
             self.cap = cv2.VideoCapture(self.webcam)
+            if not self.cap.isOpened():
+                raise RuntimeError("Failed to open video stream")
         else:
             raise ValueError("Provide url or webcam index")
-
-        if not self.cap.isOpened():
-            raise RuntimeError("Failed to open video stream")
 
         dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
         parameters = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(dictionary, parameters)
+
+    def _capture_frame(self) -> np.ndarray | None:
+        """Capture a single frame from the camera.
+
+        Grabs and discards one buffered frame to reduce staleness.
+        """
+        if self.cap is None:
+            return None
+        self.cap.grab()  # discard one stale frame
+        ret, frame = self.cap.read()
+        return frame if ret else None
 
     def get_rectified_frame(self) -> tuple[bytes | None, np.ndarray | None]:
         """Capture a frame, rectify it, return (jpeg_bytes, H_cam).
@@ -174,11 +188,8 @@ class CameraCapture:
         Returns (None, None) if no frame available or no homography
         (current or cached).
         """
-        if self.cap is None:
-            return None, None
-
-        ret, frame = self.cap.read()
-        if not ret:
+        frame = self._capture_frame()
+        if frame is None:
             return None, None
 
         # Detect markers and compute homography

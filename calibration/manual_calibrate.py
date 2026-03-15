@@ -131,36 +131,40 @@ def main():
         cv2.waitKey(500)
         time.sleep(1.0)  # extra time for projector + camera
 
-        # Take snapshot
+        # Take snapshot — retry until all 4 markers are visible.
         import urllib.request
         snapshot_url = f"{args.url.rstrip('/')}/photo.jpg"
         frame = None
-        try:
-            resp = urllib.request.urlopen(snapshot_url)
-            img_array = np.frombuffer(resp.read(), dtype=np.uint8)
-            frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        except Exception as e:
-            print(f"  Snapshot failed: {e}")
-        if frame is None:
-            print("  Failed to capture snapshot")
-            continue
-
-        # Detect markers for H_cam
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, _ = detector.detectMarkers(gray)
         detected = {}
-        if ids is not None:
-            for ii, mid in enumerate(ids.flatten()):
-                detected[int(mid)] = corners[ii][0]
-
+        H_cam = None
         DST = np.array([[0,0],[1000,0],[1000,1000],[0,1000]], dtype=np.float32)
-        if not all(mid in detected for mid in MARKER_IDS):
-            print("  Can't detect all markers — skipping")
-            show_on_projector(win_proj, black)
-            cv2.waitKey(100)
-            continue
-        src = np.array([detected[mid][CORNER_INDICES[mid]] for mid in MARKER_IDS], dtype=np.float32)
-        H_cam, _ = cv2.findHomography(src, DST)
+
+        while True:
+            try:
+                resp = urllib.request.urlopen(snapshot_url)
+                img_array = np.frombuffer(resp.read(), dtype=np.uint8)
+                frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            except Exception as e:
+                print(f"  Snapshot failed: {e}")
+                frame = None
+
+            if frame is not None:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                corners, ids, _ = detector.detectMarkers(gray)
+                detected = {}
+                if ids is not None:
+                    for ii, mid in enumerate(ids.flatten()):
+                        detected[int(mid)] = corners[ii][0]
+
+                if all(mid in detected for mid in MARKER_IDS):
+                    src = np.array([detected[mid][CORNER_INDICES[mid]] for mid in MARKER_IDS], dtype=np.float32)
+                    H_cam, _ = cv2.findHomography(src, DST)
+                    break
+
+            print("  Waiting for all 4 markers to be visible...")
+            cv2.waitKey(1000)
+
+        assert H_cam is not None
         # Show raw camera frame with markers labeled.
         # User clicks where the dot is. We transform the click through H_cam
         # to get table coordinates.

@@ -42,20 +42,20 @@ def render_graph(
     x = np.linspace(x_range[0], x_range[1], 1000)
     y = eval(safe_expr, {"__builtins__": {}, "x": x, "np": np})
 
-    ax.plot(x, y, color="cyan", linewidth=3)
+    ax.plot(x, y, color="cyan", linewidth=4)
     ax.set_xlim(x_range)
     ax.set_ylim(y_range)
 
-    # Style axes for projector visibility
-    ax.tick_params(colors="cyan", labelsize=12)
+    # Style axes for projector visibility (large for 720p readability)
+    ax.tick_params(colors="cyan", labelsize=18)
     ax.spines["bottom"].set_color("cyan")
     ax.spines["left"].set_color("cyan")
     ax.spines["top"].set_color("black")
     ax.spines["right"].set_color("black")
     ax.xaxis.label.set_color("cyan")
     ax.yaxis.label.set_color("cyan")
-    ax.set_xlabel("x", fontsize=14, color="cyan")
-    ax.set_ylabel("y", fontsize=14, color="cyan")
+    ax.set_xlabel("x", fontsize=20, color="cyan")
+    ax.set_ylabel("y", fontsize=20, color="cyan")
 
     fig.tight_layout()
 
