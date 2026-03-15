@@ -225,19 +225,18 @@ class OverlayManager:
         use_direct = True  # default to direct screen mapping
 
         if self.mode == "projector" and self.H_proj is not None:
+            # Placement is [y,x] but H_proj was calibrated with (x,y) input.
+            # Swap columns to match calibration convention.
             src_corners = np.array([
-                [y_min, x_min],
-                [y_max, x_min],
-                [y_max, x_max],
-                [y_min, x_max],
+                [x_min, y_min],
+                [x_min, y_max],
+                [x_max, y_max],
+                [x_max, y_min],
             ], dtype=np.float64).reshape(1, 4, 2)
             dst_corners = cv2.perspectiveTransform(src_corners, self.H_proj)
             dst_corners = dst_corners.reshape(4, 2)
 
-            # H_proj was calibrated with [y,x] input and the output was
-            # originally consumed as column 0=x, column 1=y.  The
-            # calibration baked in that convention, so we keep it:
-            # column 0 = projector x, column 1 = projector y.
+            # H_proj output: column 0 = projector x, column 1 = projector y.
             # Use perspective warp instead of bounding-box resize to
             # preserve perspective correction for off-axis projectors.
             oh, ow = overlay.shape[:2]

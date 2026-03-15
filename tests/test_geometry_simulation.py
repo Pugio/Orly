@@ -98,24 +98,15 @@ def _apply_perspective(image: np.ndarray, H: np.ndarray, output_size: tuple[int,
 
 
 def _identity_H_proj(proj_w: int, proj_h: int) -> np.ndarray:
-    """H_proj that maps table [y,x] in 0-1000 to projector pixels linearly.
+    """H_proj that maps table (x,y) in 0-1000 to projector pixels linearly.
 
-    Note: place_on_canvas feeds [y,x] into perspectiveTransform and reads
-    column 0 as projector x, column 1 as projector y. So H_proj maps:
-        input [y, x] -> output [proj_x, proj_y]
-
-    For an identity-like mapping where table (y,x) maps to proportional
-    projector pixels, we want:
-        proj_x = x / 1000 * proj_w   (column 0 of output from column 1 of input)
-        proj_y = y / 1000 * proj_h   (column 1 of output from column 0 of input)
-
-    We build this from correspondences.
+    Calibration convention: input is (x, y), output is (proj_x, proj_y).
+    place_on_canvas swaps placement [y,x] to [x,y] before feeding to
+    perspectiveTransform.
     """
-    # table points as [y, x] (the format place_on_canvas uses)
     src = np.array([
-        [0, 0], [0, 1000], [1000, 1000], [1000, 0],
+        [0, 0], [1000, 0], [1000, 1000], [0, 1000],
     ], dtype=np.float64)
-    # projector points as [proj_x, proj_y] (what place_on_canvas reads)
     dst = np.array([
         [0, 0], [proj_w, 0], [proj_w, proj_h], [0, proj_h],
     ], dtype=np.float64)
@@ -128,7 +119,7 @@ def _scaled_H_proj(proj_w: int, proj_h: int, scale: float = 0.5) -> np.ndarray:
     margin_x = proj_w * (1 - scale) / 2
     margin_y = proj_h * (1 - scale) / 2
     src = np.array([
-        [0, 0], [0, 1000], [1000, 1000], [1000, 0],
+        [0, 0], [1000, 0], [1000, 1000], [0, 1000],
     ], dtype=np.float64)
     dst = np.array([
         [margin_x, margin_y],
@@ -143,7 +134,7 @@ def _scaled_H_proj(proj_w: int, proj_h: int, scale: float = 0.5) -> np.ndarray:
 def _rotated_180_H_proj(proj_w: int, proj_h: int) -> np.ndarray:
     """H_proj that maps table 0-1000 to projector pixels, rotated 180 degrees."""
     src = np.array([
-        [0, 0], [0, 1000], [1000, 1000], [1000, 0],
+        [0, 0], [1000, 0], [1000, 1000], [0, 1000],
     ], dtype=np.float64)
     # 180 rotation: corners are swapped
     dst = np.array([
