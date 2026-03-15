@@ -1,0 +1,517 @@
+"""End-to-end integration tests for the TableLight backend WebSocket flow.
+
+Uses a mock Gemini Live session so no real API calls are made.
+Tests the full pipeline: client WS -> FastAPI -> mock session -> back to client.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+from dataclasses import dataclass, field
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from starlette.testclient import TestClient
+
+from backend.main import app
+
+
+# ---------------------------------------------------------------------------
+# Mock Gemini types — lightweight stand-ins for google.genai.types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeBlob:
+    data: bytes = b""
+    mime_type: str = ""
+
+
+@dataclass
+class FakeInlineData:
+    data: bytes = b""
+    mime_type: str = ""
+
+
+@dataclass
+class FakePart:
+    text: str | None = None
+    inline_data: FakeInlineData | None = None
+
+
+@dataclass
+class FakeContent:
+    role: str = "model"
+    parts: list[FakePart] = field(default_factory=list)
+
+
+@dataclass
+class FakeFunctionCall:
+    name: str = ""
+    args: dict = field(default_factory=dict)
+    id: str = "call_1"
+
+
+@dataclass
+class FakeToolCall:
+    function_calls: list[FakeFunctionCall] = field(default_factory=list)
+
+
+@dataclass
+class FakeInputTranscription:
+    text: str = ""
+
+
+@dataclass
+class FakeOutputTranscription:
+    text: str = ""
+
+
+@dataclass
+class FakeServerContent:
+    interrupted: bool = False
+    model_turn: FakeContent | None = None
+    input_transcription: FakeInputTranscription | None = None
+    output_transcription: FakeOutputTranscription | None = None
+
+
+@dataclass
+class FakeSessionResumptionUpdate:
+    new_handle: str | None = None
+
+
+@dataclass
+class FakeGoAway:
+    pass
+
+
+@dataclass
+class FakeServerMessage:
+    """A single message yielded by session.receive()."""
+    server_content: FakeServerContent | None = None
+    tool_call: FakeToolCall | None = None
+    session_resumption_update: FakeSessionResumptionUpdate | None = None
+    go_away: Any = None
+
+
+# ---------------------------------------------------------------------------
+# Mock Gemini Live Session
+# ---------------------------------------------------------------------------
+
+
+class MockLiveSession:
+    """Fake Gemini Live session that records calls and yields scripted messages."""
+
+    def __init__(self, messages: list[FakeServerMessage] | None = None):
+        self._messages = messages or []
+        self.realtime_inputs: list[dict] = []
+        self.client_contents: list[dict] = []
+        self.tool_responses: list[dict] = []
+        self._closed = False
+        # Event to signal that all scripted messages have been consumed.
+        self._all_sent = asyncio.Event()
+
+    async def send_realtime_input(self, *, audio=None, video=None):
+        self.realtime_inputs.append({"audio": audio, "video": video})
+
+    async def send_client_content(self, *, turns=None, turn_complete=False):
+        self.client_contents.append(
+            {"turns": turns, "turn_complete": turn_complete}
+        )
+
+    async def send_tool_response(self, *, function_responses=None):
+        self.tool_responses.append({"function_responses": function_responses})
+
+    async def receive(self):
+        for msg in self._messages:
+            # Small yield to let the event loop run other tasks.
+            await asyncio.sleep(0.01)
+            yield msg
+        self._all_sent.set()
+        # Keep alive until the session context manager exits.
+        while not self._closed:
+            await asyncio.sleep(0.05)
+
+    async def close(self):
+        self._closed = True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        self._closed = True
+
+
+# ---------------------------------------------------------------------------
+# Helper: build a fake genai module + client
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_genai(session: MockLiveSession):
+    """Create mock genai.Client and genai types that the backend imports lazily."""
+
+    # --- Mock types module ---
+    mock_types = MagicMock()
+
+    # Blob: accept data= and mime_type= kwargs, store them.
+    mock_types.Blob = FakeBlob
+    mock_types.Content = FakeContent
+    mock_types.Part = FakePart
+    mock_types.FunctionResponse = MagicMock(
+        side_effect=lambda name, response, id: {
+            "name": name,
+            "response": response,
+            "id": id,
+        }
+    )
+    # Config types — just accept any kwargs.
+    mock_types.LiveConnectConfig = MagicMock(return_value=MagicMock())
+    mock_types.Modality.AUDIO = "AUDIO"
+    mock_types.SpeechConfig = MagicMock(return_value=MagicMock())
+    mock_types.VoiceConfig = MagicMock(return_value=MagicMock())
+    mock_types.PrebuiltVoiceConfig = MagicMock(return_value=MagicMock())
+    mock_types.RealtimeInputConfig = MagicMock(return_value=MagicMock())
+    mock_types.AutomaticActivityDetection = MagicMock(return_value=MagicMock())
+    mock_types.StartSensitivity.START_SENSITIVITY_HIGH = "HIGH"
+    mock_types.EndSensitivity.END_SENSITIVITY_HIGH = "HIGH"
+    mock_types.ContextWindowCompressionConfig = MagicMock(return_value=MagicMock())
+    mock_types.SlidingWindow = MagicMock(return_value=MagicMock())
+    mock_types.SessionResumptionConfig = MagicMock(return_value=MagicMock())
+
+    # --- Mock client ---
+    mock_client_instance = MagicMock()
+    # client.aio.live.connect(...) returns an async context manager -> session
+    mock_client_instance.aio.live.connect = MagicMock(return_value=session)
+
+    mock_client_class = MagicMock(return_value=mock_client_instance)
+
+    # --- Mock genai module ---
+    mock_genai = MagicMock()
+    mock_genai.Client = mock_client_class
+    # Ensure `from google.genai import types` resolves to our mock_types.
+    mock_genai.types = mock_types
+
+    return mock_genai, mock_types, mock_client_instance
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def make_ws():
+    """Factory fixture: returns a function that sets up patched TestClient WS.
+
+    Usage:
+        session, ws = make_ws(messages=[...])
+    """
+
+    def _factory(
+        messages: list[FakeServerMessage] | None = None,
+    ):
+        session = MockLiveSession(messages)
+        mock_genai, mock_types, _ = _make_mock_genai(session)
+
+        # Patch the lazy imports inside session_endpoint.
+        patcher_genai = patch.dict(
+            "sys.modules",
+            {
+                "google": MagicMock(genai=mock_genai),
+                "google.genai": mock_genai,
+                "google.genai.types": mock_types,
+            },
+        )
+        patcher_genai.start()
+
+        client = TestClient(app)
+        ws = client.websocket_connect("/ws/session")
+        ws.__enter__()
+        # Send init message.
+        ws.send_json({"text_only": False})
+
+        class _Handle:
+            def close(self):
+                try:
+                    ws.send_json({"type": "close"})
+                except Exception:
+                    pass
+                try:
+                    ws.__exit__(None, None, None)
+                except Exception:
+                    pass
+                patcher_genai.stop()
+
+        return session, ws, _Handle()
+
+    return _factory
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAudioForwarding:
+    def test_audio_forwarded_to_gemini(self, make_ws):
+        """Send audio via WS, verify mock session received it."""
+        session, ws, handle = make_ws()
+        try:
+            pcm = b"\x00\x01" * 800  # 1600 bytes of fake PCM
+            ws.send_json({
+                "type": "audio",
+                "data": base64.b64encode(pcm).decode(),
+            })
+            # Give time for the backend coroutine to process.
+            import time
+            time.sleep(0.3)
+
+            assert len(session.realtime_inputs) >= 1
+            sent = session.realtime_inputs[0]
+            assert sent["audio"] is not None
+            assert sent["audio"].data == pcm
+            assert "audio" in sent["audio"].mime_type
+        finally:
+            handle.close()
+
+
+class TestVideoForwarding:
+    def test_video_forwarded_to_gemini(self, make_ws):
+        """Send video via WS, verify mock session received it."""
+        session, ws, handle = make_ws()
+        try:
+            jpeg = b"\xff\xd8fake-jpeg"
+            ws.send_json({
+                "type": "video",
+                "data": base64.b64encode(jpeg).decode(),
+            })
+            import time
+            time.sleep(0.3)
+
+            assert len(session.realtime_inputs) >= 1
+            sent = session.realtime_inputs[0]
+            assert sent["video"] is not None
+            assert sent["video"].data == jpeg
+            assert "image/jpeg" in sent["video"].mime_type
+        finally:
+            handle.close()
+
+
+class TestTextForwarding:
+    def test_text_forwarded_to_gemini(self, make_ws):
+        """Send text, verify send_client_content was called on session."""
+        session, ws, handle = make_ws()
+        try:
+            ws.send_json({"type": "text", "text": "What is 2+2?"})
+            import time
+            time.sleep(0.3)
+
+            assert len(session.client_contents) >= 1
+            sent = session.client_contents[0]
+            assert sent["turn_complete"] is True
+            # The turns object should be a FakeContent with the text.
+            turns = sent["turns"]
+            assert turns.parts[0].text == "What is 2+2?"
+        finally:
+            handle.close()
+
+
+class TestAudioResponse:
+    def test_audio_response_forwarded_to_client(self, make_ws):
+        """Mock yields audio, client receives it via WS."""
+        audio_bytes = b"\x00\x01" * 100
+        messages = [
+            FakeServerMessage(
+                server_content=FakeServerContent(
+                    model_turn=FakeContent(
+                        role="model",
+                        parts=[
+                            FakePart(
+                                inline_data=FakeInlineData(
+                                    data=audio_bytes,
+                                    mime_type="audio/pcm;rate=24000",
+                                )
+                            )
+                        ],
+                    )
+                )
+            )
+        ]
+        session, ws, handle = make_ws(messages)
+        try:
+            # The server should push audio to us without us sending anything.
+            import time
+            time.sleep(0.5)
+            resp = ws.receive_json(mode="text")
+            assert resp["type"] == "audio"
+            decoded = base64.b64decode(resp["data"])
+            assert decoded == audio_bytes
+        finally:
+            handle.close()
+
+
+class TestTranscript:
+    def test_transcript_forwarded_to_client(self, make_ws):
+        """Mock yields output transcription, client receives transcript_out."""
+        messages = [
+            FakeServerMessage(
+                server_content=FakeServerContent(
+                    output_transcription=FakeOutputTranscription(
+                        text="The answer is four."
+                    )
+                )
+            )
+        ]
+        session, ws, handle = make_ws(messages)
+        try:
+            import time
+            time.sleep(0.5)
+            resp = ws.receive_json(mode="text")
+            assert resp["type"] == "transcript_out"
+            assert resp["text"] == "The answer is four."
+        finally:
+            handle.close()
+
+
+class TestToolCallFlow:
+    def test_tool_call_executed_and_responded(self, make_ws):
+        """Mock yields a tool_call for project_overlay.
+
+        Verify: tool executed, result sent to client, FunctionResponse sent
+        back to session.
+        """
+        messages = [
+            FakeServerMessage(
+                tool_call=FakeToolCall(
+                    function_calls=[
+                        FakeFunctionCall(
+                            name="project_overlay",
+                            args={
+                                "content_type": "annotation",
+                                "placement": [100, 100, 500, 600],
+                                "title": "Test label",
+                                "data": {"text": "Hello!"},
+                            },
+                            id="call_42",
+                        )
+                    ]
+                )
+            )
+        ]
+        session, ws, handle = make_ws(messages)
+        try:
+            import time
+            time.sleep(0.5)
+
+            # Client should receive the tool_result message.
+            resp = ws.receive_json(mode="text")
+            assert resp["type"] == "tool_result"
+            assert resp["name"] == "project_overlay"
+            assert resp["result"]["status"] == "displayed"
+            assert resp["result"]["content_type"] == "annotation"
+
+            # Session should have received the FunctionResponse.
+            assert len(session.tool_responses) >= 1
+            fn_responses = session.tool_responses[0]["function_responses"]
+            assert len(fn_responses) == 1
+            assert fn_responses[0]["name"] == "project_overlay"
+            assert fn_responses[0]["id"] == "call_42"
+            assert fn_responses[0]["response"]["status"] == "displayed"
+        finally:
+            handle.close()
+
+
+class TestInterruption:
+    def test_interruption_forwarded(self, make_ws):
+        """Mock yields interrupted, client receives interrupted message."""
+        messages = [
+            FakeServerMessage(
+                server_content=FakeServerContent(interrupted=True)
+            )
+        ]
+        session, ws, handle = make_ws(messages)
+        try:
+            import time
+            time.sleep(0.5)
+            resp = ws.receive_json(mode="text")
+            assert resp["type"] == "interrupted"
+        finally:
+            handle.close()
+
+
+class TestSessionReconnect:
+    def test_session_reconnect_on_crash(self, make_ws):
+        """Mock raises an exception during receive, verify reconnection attempt.
+
+        We use a custom session that raises on first receive, then succeeds
+        with a transcript on the second connection.
+        """
+
+        call_count = {"n": 0}
+
+        class CrashThenOkSession(MockLiveSession):
+            """First connection raises, second yields a transcript."""
+
+            def __init__(self):
+                super().__init__([])
+
+            async def receive(self):
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    raise RuntimeError("Simulated Gemini crash")
+                # Second connection: yield a transcript then stay alive.
+                yield FakeServerMessage(
+                    server_content=FakeServerContent(
+                        output_transcription=FakeOutputTranscription(
+                            text="Recovered!"
+                        )
+                    )
+                )
+                while not self._closed:
+                    await asyncio.sleep(0.05)
+
+        session = CrashThenOkSession()
+        mock_genai, mock_types, _ = _make_mock_genai(session)
+
+        patcher = patch.dict(
+            "sys.modules",
+            {
+                "google": MagicMock(genai=mock_genai),
+                "google.genai": mock_genai,
+                "google.genai.types": mock_types,
+            },
+        )
+        patcher.start()
+        try:
+            client = TestClient(app)
+            with client.websocket_connect("/ws/session") as ws:
+                ws.send_json({"text_only": False})
+
+                import time
+                time.sleep(1.5)  # Give time for crash + reconnect + message delivery.
+
+                # We should get the reconnecting transcript and then the recovered one.
+                received = []
+                # Drain all available messages.
+                for _ in range(10):
+                    try:
+                        resp = ws.receive_json(mode="text")
+                        received.append(resp)
+                    except Exception:
+                        break
+
+                # Should have at least the reconnection notice.
+                types_seen = [r["type"] for r in received]
+                texts_seen = [r.get("text", "") for r in received]
+
+                assert "transcript_out" in types_seen
+                # Either reconnecting message or recovered message should be present.
+                assert any(
+                    "Reconnecting" in t or "Recovered" in t for t in texts_seen
+                ), f"Expected reconnection evidence, got: {texts_seen}"
+                assert call_count["n"] >= 2, "Session should have been created at least twice"
+        finally:
+            patcher.stop()
