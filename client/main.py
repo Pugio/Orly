@@ -353,6 +353,17 @@ async def main(args: argparse.Namespace | None = None):
                                           recomposite=False)
                 except Exception:
                     pass
+        elif name == "advance_step" and result.get("status") == "advancing":
+            overlay_name = result.get("overlay_name", "")
+            step_number = result.get("step_number", 1)
+            entry = overlay_state.get(overlay_name)
+            if entry and entry.content_type == "steps":
+                entry.data["visible_count"] = step_number
+                new_img = overlay_manager.render_overlay(
+                    "steps", entry.placement, entry.title, entry.data)
+                overlay_state.add(
+                    overlay_name, "steps", entry.placement,
+                    entry.title, entry.data, new_img)
         print(f"[TableLight] Overlay projected: {content_type} — {title}")
 
     _last_direction = {"value": None}

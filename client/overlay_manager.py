@@ -18,6 +18,10 @@ from client.renderer.annotation import render_annotation
 from client.renderer.highlight import render_highlight
 from client.renderer.markdown import render_markdown
 from client.renderer.image import render_image, render_loading
+from client.renderer.number_line import render_number_line
+from client.renderer.geometry import render_geometry
+from client.renderer.chemistry import render_chemistry
+from client.renderer.steps import render_steps
 
 
 class OverlayManager:
@@ -184,7 +188,8 @@ class OverlayManager:
         """Render an overlay image using client/renderer/ modules.
 
         Args:
-            content_type: "graph", "annotation", "highlight", "markdown", or "image".
+            content_type: One of the supported overlay types (graph, annotation,
+                highlight, markdown, image, number_line, geometry, chemistry, steps).
             placement: [ymin, xmin, ymax, xmax] in Gemini 0-1000 coords.
             title: Title text (used as prefix for annotations).
             data: Type-specific data dict.
@@ -223,6 +228,28 @@ class OverlayManager:
             # render_highlight returns BGRA; convert to BGR for canvas compositing
             bgra = render_highlight(overlay_w, overlay_h, color_hex=color_hex)
             return bgra[:, :, :3]
+
+        elif content_type == "number_line":
+            return render_number_line(
+                data.get("min_val", 0), data.get("max_val", 10),
+                data.get("points", []), data.get("ranges", []),
+                overlay_w, overlay_h)
+
+        elif content_type == "geometry":
+            return render_geometry(
+                data.get("elements", []),
+                data.get("x_range", [-10, 10]), data.get("y_range", [-10, 10]),
+                overlay_w, overlay_h, data.get("show_grid", False))
+
+        elif content_type == "chemistry":
+            return render_chemistry(
+                data.get("atoms", []), data.get("bonds", []),
+                overlay_w, overlay_h, data.get("title", title))
+
+        elif content_type == "steps":
+            steps = data.get("steps", [])
+            visible = data.get("visible_count", 0)
+            return render_steps(steps, visible, overlay_w, overlay_h)
 
         else:
             # Unknown type: return black image
