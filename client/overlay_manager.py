@@ -73,6 +73,7 @@ class OverlayManager:
         title = result.get("title", "")
         data = result.get("data", {})
 
+        placement = self._unrotate_placement(placement)
         placement = self.adjust_text_placement(content_type, placement)
 
         if content_type == "image":
@@ -237,15 +238,22 @@ class OverlayManager:
             # originally consumed as column 0=x, column 1=y.  The
             # calibration baked in that convention, so we keep it:
             # column 0 = projector x, column 1 = projector y.
-            px_min = max(0, int(dst_corners[:, 0].min()))
-            py_min = max(0, int(dst_corners[:, 1].min()))
-            px_max = min(self.proj_width, int(dst_corners[:, 0].max()))
-            py_max = min(self.proj_height, int(dst_corners[:, 1].max()))
-            if px_max > px_min and py_max > py_min:
-                w, h = px_max - px_min, py_max - py_min
-                resized = cv2.resize(overlay, (w, h))
-                self._composite(canvas, resized, py_min, py_max, px_min, px_max)
-                use_direct = False
+            # Use perspective warp instead of bounding-box resize to
+            # preserve perspective correction for off-axis projectors.
+            oh, ow = overlay.shape[:2]
+            overlay_corners = np.array(
+                [[0, 0], [ow, 0], [ow, oh], [0, oh]], dtype=np.float32
+            )
+            # dst_corners columns: 0=px, 1=py → getPerspectiveTransform wants (x,y)
+            dst_xy = dst_corners.astype(np.float32)
+            M = cv2.getPerspectiveTransform(overlay_corners, dst_xy)
+            warped = cv2.warpPerspective(
+                overlay, M, (self.proj_width, self.proj_height)
+            )
+            # Composite: non-black warped pixels onto canvas
+            mask = warped.sum(axis=2) > 0
+            canvas[mask] = warped[mask]
+            use_direct = False
 
         if use_direct:
             px_min = max(0, int(x_min / 1000.0 * self.proj_width))
