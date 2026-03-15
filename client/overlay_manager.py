@@ -52,6 +52,12 @@ class OverlayManager:
         overlay = self.render_overlay(content_type, placement, title, data)
         self.canvas = self.place_on_canvas(overlay, placement)
 
+        # Debug: save canvas and log
+        non_black = np.count_nonzero(self.canvas)
+        print(f"[OverlayManager] Rendered {content_type}, placement={placement}, "
+              f"canvas non-black pixels: {non_black}")
+        cv2.imwrite("debug_canvas.png", self.canvas)
+
     def render_overlay(
         self,
         content_type: str,
@@ -71,8 +77,8 @@ class OverlayManager:
             Rendered overlay as BGR numpy array (black background).
         """
         # Compute overlay dimensions from placement
-        # Use a reasonable pixel size based on the fraction of the canvas
-        x_min, y_min, x_max, y_max = placement
+        # Gemini returns [ymin, xmin, ymax, xmax]
+        y_min, x_min, y_max, x_max = placement
         w_frac = (x_max - x_min) / 1000.0
         h_frac = (y_max - y_min) / 1000.0
         overlay_w = max(1, int(w_frac * self.proj_width))
@@ -111,7 +117,8 @@ class OverlayManager:
         Returns updated canvas.
         """
         canvas = self.canvas.copy()
-        x_min, y_min, x_max, y_max = placement
+        # Gemini returns [ymin, xmin, ymax, xmax]
+        y_min, x_min, y_max, x_max = placement
 
         if self.mode == "projector" and self.H_proj is not None:
             # Map the four corners of the placement rectangle through H_proj

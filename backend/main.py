@@ -8,6 +8,7 @@ import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TableLight Backend")
@@ -172,6 +173,7 @@ async def session_endpoint(websocket: WebSocket) -> None:
 
     async def send_to_client() -> None:
         """Run ADK agent, forward events to edge client."""
+        print("[BACKEND] send_to_client starting run_live...")
         try:
             async for event in runner.run_live(
                 session=session,
@@ -191,11 +193,11 @@ async def session_endpoint(websocket: WebSocket) -> None:
                         if p.function_response:
                             parts_summary.append(f"function_response({p.function_response.name})")
                 if parts_summary:
-                    logger.info("Event parts: %s", ", ".join(parts_summary))
+                    print(f"[BACKEND] Event: {', '.join(parts_summary)}")
                 if event.input_transcription:
-                    logger.info("Input transcription: %s", event.input_transcription.text)
+                    print(f"[BACKEND] Input: {event.input_transcription.text[:80]}")
                 if event.output_transcription:
-                    logger.info("Output transcription: %s", event.output_transcription.text)
+                    print(f"[BACKEND] Output: {event.output_transcription.text[:80]}")
 
                 # Process content parts: audio, function calls/responses.
                 if event.content and event.content.parts:
@@ -210,11 +212,13 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                 format_audio_response(part.inline_data.data)
                             )
 
-                        # Text response (text-only mode).
+                        # Text response — filter out audio control tokens.
                         if part.text:
-                            await websocket.send_json(
-                                format_transcript("out", part.text)
-                            )
+                            text = part.text.strip()
+                            if text and "<ctrl" not in text:
+                                await websocket.send_json(
+                                    format_transcript("out", text)
+                                )
 
                         # Function call → ADK executes automatically,
                         # but we forward the call info to the edge client

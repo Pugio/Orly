@@ -73,6 +73,9 @@ def find_laptop() -> dict | None:
     return None
 
 
+_projector_window_initialized = set()
+
+
 def show_on_projector(window_name: str, image: np.ndarray, fullscreen: bool = True) -> None:
     """Show an OpenCV window on the projector display.
 
@@ -81,13 +84,23 @@ def show_on_projector(window_name: str, image: np.ndarray, fullscreen: bool = Tr
     """
     proj = find_projector()
 
-    if fullscreen:
+    if window_name not in _projector_window_initialized:
+        # First call: create window, move to projector, THEN fullscreen.
+        # On macOS, fullscreen before move takes over the primary display.
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
-    if proj and "origin" in proj:
-        ox, oy = proj["origin"]
-        cv2.moveWindow(window_name, ox, oy)
+        if proj and "origin" in proj:
+            ox, oy = proj["origin"]
+            # Move to projector display first
+            cv2.moveWindow(window_name, ox + 1, oy + 1)
+            # Need to show something and process events for the move to take effect
+            cv2.imshow(window_name, image)
+            cv2.waitKey(50)
+
+        if fullscreen:
+            cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+        _projector_window_initialized.add(window_name)
 
     cv2.imshow(window_name, image)
 
