@@ -107,17 +107,19 @@ async def text_input_loop(client: TableLightClient):
 async def display_loop(overlay_manager: OverlayManager, mode: str):
     """Update the projector/screen overlay display."""
     win_name = "TableLight Overlay"
+    frame_count = 0
     while True:
         canvas = overlay_manager.canvas
+        has_content = np.any(canvas > 0)
         if mode == "projector":
             show_on_projector(win_name, canvas, fullscreen=True)
         else:
             show_on_laptop(win_name, canvas)
-        # cv2.waitKey processes the event loop; use a short wait
-        key = cv2.waitKey(100)  # 100ms — balances responsiveness and CPU
-        if key == ord("q"):
-            break
-        await asyncio.sleep(0)  # yield to event loop
+        cv2.waitKey(1)
+        frame_count += 1
+        if has_content and frame_count % 50 == 0:
+            print(f"[Display] Frame {frame_count}, canvas non-black: {np.count_nonzero(canvas)}")
+        await asyncio.sleep(0.05)  # ~20fps, yield to event loop
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +183,10 @@ def load_projector_homography(path: str) -> tuple[np.ndarray, int, int]:
     return H_proj, proj_width, proj_height
 
 
-async def main(argv: list[str] | None = None):
-    """Run the TableLight edge client."""
-    args = parse_args(argv)
+async def main(args: argparse.Namespace | None = None):
+    """Run the TableLight edge client (async tasks only, no OpenCV)."""
+    if args is None:
+        args = parse_args()
 
     # --- Camera ---
     camera = CameraCapture(url=args.url, webcam=args.webcam)
@@ -205,6 +208,7 @@ async def main(argv: list[str] | None = None):
         proj_height=proj_height,
         mode=args.mode,
     )
+    _shared_state["overlay_manager"] = overlay_manager
 
     # --- Audio ---
     audio_capture = None
@@ -232,6 +236,7 @@ async def main(argv: list[str] | None = None):
         content_type = result.get("content_type", "unknown")
         title = result.get("title", "")
         print(f"[TableLight] Overlay projected: {content_type} — {title}")
+        # Canvas is updated — main thread display loop will pick it up
 
     async def on_transcript(direction: str, text: str):
         if not text or not text.strip():
@@ -259,13 +264,10 @@ async def main(argv: list[str] | None = None):
     await client.connect(text_only=args.no_audio)
     print(f"[TableLight] Connected ({'text-only' if args.no_audio else 'audio'} mode).")
 
-    # --- Build task list ---
+    # --- Build task list (NO display_loop — OpenCV runs on main thread) ---
     tasks = [
         asyncio.create_task(video_loop(camera, client, args.fps), name="video"),
         asyncio.create_task(client.receive_loop(), name="receive"),
-        asyncio.create_task(
-            display_loop(overlay_manager, args.mode), name="display"
-        ),
     ]
 
     if audio_capture and not args.no_audio:
@@ -284,38 +286,107 @@ async def main(argv: list[str] | None = None):
             asyncio.create_task(text_input_loop(client), name="text_input")
         )
 
-    # --- Handle graceful shutdown ---
-    stop_event = asyncio.Event()
+    # Let all tasks run; they'll be cancelled when the main thread stops
+    try:
+        await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await client.close()
+        camera.stop()
+        if audio_capture:
+            audio_capture.stop()
+        if audio_player:
+            audio_player.stop()
+        print("[TableLight] Async tasks stopped.")
 
-    def _signal_handler():
-        print("\n[TableLight] Shutting down...")
-        stop_event.set()
 
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _signal_handler)
+def run():
+    """Entry point: runs asyncio in a background thread, OpenCV on main thread.
 
-    # Wait until stop signal or a task crashes
-    done, pending = await asyncio.wait(
-        [asyncio.create_task(stop_event.wait(), name="stop"), *tasks],
-        return_when=asyncio.FIRST_COMPLETED,
+    macOS requires OpenCV highgui (window rendering) to run on the main thread.
+    """
+    args = parse_args()
+
+    # --- Projector verification (must be on main thread) ---
+    if args.mode == "projector":
+        proj_width, proj_height = get_projector_resolution()
+        print("[TableLight] Projector verification — showing test pattern...")
+        test_canvas = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
+        cx, cy = proj_width // 2, proj_height // 2
+        cv2.circle(test_canvas, (cx, cy), 80, (255, 255, 0), 3)
+        cv2.putText(test_canvas, "TableLight", (cx - 100, cy + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+        for x, y in [(50, 50), (proj_width - 50, 50),
+                      (proj_width - 50, proj_height - 50), (50, proj_height - 50)]:
+            cv2.drawMarker(test_canvas, (x, y), (0, 0, 255),
+                           cv2.MARKER_CROSS, 30, 2)
+        show_on_projector("TableLight Overlay", test_canvas, fullscreen=True)
+        cv2.waitKey(1)
+        print("[TableLight] Do you see the test pattern on the projector? "
+              "(Enter to continue, q to quit)")
+        response = input().strip().lower()
+        if response == "q":
+            cv2.destroyAllWindows()
+            print("[TableLight] Aborted.")
+            return
+        print("[TableLight] Projector verified.")
+
+    # Start the async event loop in a background thread
+    loop = asyncio.new_event_loop()
+    main_coro = main(args)
+
+    import threading
+    async_thread = threading.Thread(
+        target=lambda: loop.run_until_complete(main_coro),
+        daemon=True,
     )
+    async_thread.start()
 
-    # Cancel remaining tasks
-    for t in pending:
-        t.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
+    # Main thread: OpenCV display loop
+    # Wait briefly for async setup to initialize overlay_manager
+    import time
+    time.sleep(1)
 
-    # --- Cleanup ---
-    await client.close()
-    camera.stop()
-    if audio_capture:
-        audio_capture.stop()
-    if audio_player:
-        audio_player.stop()
-    cv2.destroyAllWindows()
-    print("[TableLight] Shutdown complete.")
+    win_name = "TableLight Overlay"
+    print("[TableLight] Display loop running on main thread. Press Ctrl+C to quit.")
+
+    frame_n = 0
+    try:
+        while async_thread.is_alive():
+            om = _shared_state.get("overlay_manager")
+            if om is not None:
+                canvas = om.canvas
+                if args.mode == "projector":
+                    show_on_projector(win_name, canvas, fullscreen=True)
+                else:
+                    show_on_laptop(win_name, canvas)
+                frame_n += 1
+                if frame_n == 1:
+                    print("[Display] First frame sent to projector.")
+                has_content = np.any(canvas > 0)
+                if has_content and frame_n % 20 == 0:
+                    print(f"[Display] Frame {frame_n}, non-black: {np.count_nonzero(canvas)}, "
+                          f"max: {canvas.max()}, shape: {canvas.shape}")
+                    cv2.imwrite("debug_main_thread_canvas.png", canvas)
+            else:
+                if frame_n == 0:
+                    print("[Display] Waiting for overlay_manager...")
+            cv2.waitKey(50)
+    except KeyboardInterrupt:
+        print("\n[TableLight] Shutting down...")
+    finally:
+        cv2.destroyAllWindows()
+        # Cancel async tasks
+        for task in asyncio.all_tasks(loop):
+            loop.call_soon_threadsafe(task.cancel)
+        async_thread.join(timeout=3)
+        print("[TableLight] Shutdown complete.")
+
+
+# Shared state so the main thread can access overlay_manager created in async main()
+_shared_state: dict = {}
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run()

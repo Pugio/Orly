@@ -67,13 +67,15 @@ def create_dot_image(
     proj_width: int,
     proj_height: int,
     dot_center: tuple[int, int],
-    dot_radius: int = 15,
+    dot_radius: int = 40,
 ) -> np.ndarray:
-    """Create a black image with a single white dot at the given position.
+    """Create a black image with a single bright dot at the given position.
 
+    Uses a large, bright dot for visibility under ambient light.
     Returns BGR image (H, W, 3) of dtype uint8.
     """
     img = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
+    # Bright filled circle
     cv2.circle(img, dot_center, dot_radius, (255, 255, 255), -1)
     return img
 
@@ -81,9 +83,12 @@ def create_dot_image(
 def find_bright_centroid(
     frame: np.ndarray,
     background: np.ndarray,
-    threshold: int = 50,
+    threshold: int = 40,
 ) -> tuple[float, float] | None:
-    """Find the centroid of the brightest region by subtracting background.
+    """Find the centroid of the largest bright region by subtracting background.
+
+    Uses contour detection to find the largest blob, ignoring small
+    artifacts from camera movement or marker edge noise.
 
     Returns (x, y) in pixel coordinates, or None if no bright region found.
     """
@@ -94,11 +99,52 @@ def find_bright_centroid(
     # Subtract background, clip to 0
     diff = np.clip(fg - bg, 0, 255).astype(np.uint8)
 
+    # Blur to reduce noise
+    diff = cv2.GaussianBlur(diff, (15, 15), 0)
+
     # Threshold
     _, mask = cv2.threshold(diff, threshold, 255, cv2.THRESH_BINARY)
 
-    # Find contours / moments
-    moments = cv2.moments(mask)
+    # Find contours — pick the most circular one (the projected dot)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    # Score each contour by circularity — the dot is round, reflections are not
+    best = None
+    best_score = -1
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < 100:
+            continue
+        perimeter = cv2.arcLength(c, True)
+        if perimeter == 0:
+            continue
+        circularity = 4 * np.pi * area / (perimeter * perimeter)
+        # Also weight by mean brightness inside the contour
+        c_mask = np.zeros(diff.shape, dtype=np.uint8)
+        cv2.drawContours(c_mask, [c], 0, 255, -1)
+        mean_brightness = cv2.mean(diff, mask=c_mask)[0]
+        # Score: circularity * brightness — favors round, bright blobs
+        score = circularity * mean_brightness
+        if score > best_score:
+            best_score = score
+            best = c
+
+    if best is None:
+        return None
+
+    # Check that the best blob is actually bright and large enough
+    # (not just marker noise or slight camera movement artifacts)
+    c_mask = np.zeros(diff.shape, dtype=np.uint8)
+    cv2.drawContours(c_mask, [best], 0, 255, -1)
+    mean_val = cv2.mean(diff, mask=c_mask)[0]
+    blob_area = cv2.contourArea(best)
+    print(f"    [debug] blob area={blob_area:.0f}, mean brightness={mean_val:.0f}")
+    if blob_area < 200:
+        return None  # Too small — probably not the projected dot
+
+    moments = cv2.moments(best)
     if moments["m00"] == 0:
         return None
 
@@ -113,7 +159,10 @@ def camera_to_table(
 ) -> tuple[float, float]:
     """Transform a camera pixel coordinate to table coordinate using H_cam.
 
-    Returns (x, y) in table space.
+    H_cam maps camera pixels directly to 0-1000 normalized table space
+    (when computed with DST_POINTS spanning 0-1000).
+
+    Returns (x, y) in table space (0-1000 normalized).
     """
     pt = np.array([[point]], dtype=np.float64)  # shape (1, 1, 2)
     transformed = cv2.perspectiveTransform(pt, H_cam)
@@ -163,10 +212,9 @@ def detect_camera_homography(cap: cv2.VideoCapture) -> np.ndarray:
     ARUCO_DICT = cv2.aruco.DICT_4X4_50
     MARKER_IDS = [0, 1, 2, 3]
     CORNER_INDICES = {0: 2, 1: 3, 2: 0, 3: 1}
-    # Output size matches PoC 1 — A4 aspect ratio
-    OUTPUT_W, OUTPUT_H = 600, 848
+    # Map directly to 0-1000 normalized table space
     DST_POINTS = np.array([
-        [0, 0], [OUTPUT_W, 0], [OUTPUT_W, OUTPUT_H], [0, OUTPUT_H],
+        [0, 0], [1000, 0], [1000, 1000], [0, 1000],
     ], dtype=np.float32)
 
     dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
@@ -198,7 +246,11 @@ def detect_camera_homography(cap: cv2.VideoCapture) -> np.ndarray:
             src = np.array(src_points, dtype=np.float32)
             H, _ = cv2.findHomography(src, DST_POINTS)
             if H is not None:
-                print(f"  All 4 markers detected. H_cam computed.")
+                print(f"  All 4 markers detected.")
+                for idx, mid in enumerate(MARKER_IDS):
+                    c = src_points[idx]
+                    d = DST_POINTS[idx]
+                    print(f"    Marker {mid}: camera ({c[0]:.0f}, {c[1]:.0f}) -> table ({d[0]:.0f}, {d[1]:.0f})")
                 return H
 
         found = sorted(detected.keys())
@@ -311,17 +363,46 @@ def main():
     for i, (px, py) in enumerate(grid):
         print(f"\nDot {i + 1}/{len(grid)}: projector ({px}, {py})")
 
-        # Project the dot
-        dot_img = create_dot_image(args.proj_width, args.proj_height, (px, py))
-        show_on_projector(win_name, dot_img)
-        cv2.waitKey(500)  # Wait for projector to display + camera to settle
-
-        # Capture frame
-        # Discard a few frames to account for camera lag
-        for _ in range(5):
+        # Show black first to clear previous dot
+        show_on_projector(win_name, black)
+        cv2.waitKey(1)
+        time.sleep(0.5)
+        # Flush camera buffer while showing black
+        for _ in range(10):
             cap.read()
             time.sleep(0.05)
-        ret, frame = cap.read()
+
+        # Now project the dot
+        dot_img = create_dot_image(args.proj_width, args.proj_height, (px, py))
+        show_on_projector(win_name, dot_img)
+        cv2.waitKey(1)
+        time.sleep(1.0)  # Wait for projector + camera to settle
+
+        # Capture multiple frames and pick the one with brightest diff
+        candidates = []
+        for _ in range(15):
+            ret, f = cap.read()
+            if ret:
+                candidates.append(f)
+            time.sleep(0.05)
+
+        if not candidates:
+            print(f"  WARNING: Failed to capture frame, skipping dot {i + 1}")
+            continue
+
+        # Pick the frame with the highest max diff from background
+        best_frame = None
+        best_max = 0
+        for f in candidates:
+            fg = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.int16)
+            bg = cv2.cvtColor(background, cv2.COLOR_BGR2GRAY).astype(np.int16)
+            d = np.clip(fg - bg, 0, 255).astype(np.uint8)
+            mx = d.max()
+            if mx > best_max:
+                best_max = mx
+                best_frame = f
+        frame = best_frame
+        ret = True
 
         if not ret:
             print(f"  WARNING: Failed to capture frame, skipping dot {i + 1}")
@@ -329,6 +410,16 @@ def main():
 
         # Find centroid
         centroid = find_bright_centroid(frame, background)
+
+        # Save debug images for ALL dots
+        cv2.imwrite(f"debug_cal_frame_{i}.png", frame)
+        diff = cv2.absdiff(frame, background)
+        cv2.imwrite(f"debug_cal_diff_{i}.png", diff)
+        if centroid:
+            debug = frame.copy()
+            cv2.circle(debug, (int(centroid[0]), int(centroid[1])), 10, (0, 0, 255), 2)
+            cv2.imwrite(f"debug_cal_centroid_{i}.png", debug)
+
         if centroid is None:
             print(f"  WARNING: No bright region found, skipping dot {i + 1}")
             continue
@@ -339,6 +430,11 @@ def main():
         # Transform to table coordinates
         table_x, table_y = camera_to_table((cam_x, cam_y), H_cam)
         print(f"  Table coords: ({table_x:.1f}, {table_y:.1f})")
+
+        # Skip points outside the mat (0-1000 range with some tolerance)
+        if table_x < -50 or table_x > 1050 or table_y < -50 or table_y > 1050:
+            print(f"  WARNING: Table coords outside mat, skipping")
+            continue
 
         table_points.append((table_x, table_y))
         projector_points.append((px, py))

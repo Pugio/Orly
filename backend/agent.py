@@ -29,9 +29,24 @@ GROUNDING:
 
 MODEL = "gemini-2.5-flash-native-audio-latest"
 
+
+def _before_tool(tool, args, tool_context):
+    """Intercept tool calls — execute and return result directly.
+
+    The Live API native-audio model is flaky with ADK's automatic tool
+    response handling. By returning a result here, ADK skips its own
+    dispatch and sends our result back to the model.
+    """
+    if tool.name == "project_overlay":
+        result = project_overlay(**args)
+        return result
+    return None  # Let ADK handle other tools normally
+
+
 root_agent = Agent(
     name="lumi_tutor",
     model=MODEL,
     instruction=SYSTEM_PROMPT,
     tools=[project_overlay],
+    before_tool_callback=_before_tool,
 )

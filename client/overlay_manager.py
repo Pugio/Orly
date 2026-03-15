@@ -120,6 +120,8 @@ class OverlayManager:
         # Gemini returns [ymin, xmin, ymax, xmax]
         y_min, x_min, y_max, x_max = placement
 
+        use_direct = True  # default to direct screen mapping
+
         if self.mode == "projector" and self.H_proj is not None:
             # Map the four corners of the placement rectangle through H_proj
             src_corners = np.array([
@@ -140,8 +142,12 @@ class OverlayManager:
             if px_max > px_min and py_max > py_min:
                 resized = cv2.resize(overlay, (px_max - px_min, py_max - py_min))
                 canvas[py_min:py_max, px_min:px_max] = resized
+                use_direct = False
+            else:
+                print(f"[OverlayManager] WARNING: H_proj mapped outside bounds, "
+                      f"falling back to direct mapping")
 
-        else:
+        if use_direct:
             # Screen mode: direct mapping from 0-1000 to pixel coords
             px_min = max(0, int(x_min / 1000.0 * self.proj_width))
             py_min = max(0, int(y_min / 1000.0 * self.proj_height))
