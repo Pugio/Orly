@@ -2,12 +2,14 @@
 
 Drop-in replacement for the physical client. Sends synthetic audio/video,
 records all responses with timestamps, and measures latency.
+
+Uses binary WebSocket protocol for audio/video (1-byte prefix + raw payload)
+and JSON text frames for text and control messages.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import time
@@ -26,6 +28,11 @@ from simulation.fake_camera import generate_test_jpeg
 from simulation.scenarios import Scenario, ScenarioStep
 
 logger = logging.getLogger(__name__)
+
+# Binary protocol prefixes (must match backend/main.py).
+PREFIX_AUDIO_IN = b"\x01"
+PREFIX_VIDEO_IN = b"\x02"
+PREFIX_AUDIO_OUT = b"\x03"
 
 
 @dataclass
@@ -105,7 +112,7 @@ class SimClient:
             self.backend_url,
             max_size=10 * 1024 * 1024,  # 10MB for large audio responses
         )
-        # Send init message (text_only mode since we use send_text for questions).
+        # Send init message (always JSON text).
         await self.ws.send(json.dumps({"text_only": False}))
         logger.info("SimClient connected to %s", self.backend_url)
 
@@ -120,17 +127,15 @@ class SimClient:
             self.ws = None
 
     async def send_audio(self, pcm_bytes: bytes):
-        """Send a single audio chunk."""
-        msg = {"type": "audio", "data": base64.b64encode(pcm_bytes).decode()}
-        await self.ws.send(json.dumps(msg))
+        """Send a single audio chunk as binary frame."""
+        await self.ws.send(PREFIX_AUDIO_IN + pcm_bytes)
 
     async def send_video(self, jpeg_bytes: bytes):
-        """Send a video frame."""
-        msg = {"type": "video", "data": base64.b64encode(jpeg_bytes).decode()}
-        await self.ws.send(json.dumps(msg))
+        """Send a video frame as binary frame."""
+        await self.ws.send(PREFIX_VIDEO_IN + jpeg_bytes)
 
     async def send_text(self, text: str):
-        """Send a text message."""
+        """Send a text message as JSON text frame."""
         await self.ws.send(json.dumps({"type": "text", "text": text}))
 
     async def _receive_events(
@@ -152,20 +157,26 @@ class SimClient:
                     continue
 
                 now = time.monotonic()
+
+                # Binary frame: audio response
+                if isinstance(raw, bytes):
+                    if len(raw) >= 1 and raw[0:1] == PREFIX_AUDIO_OUT:
+                        audio_payload = raw[1:]
+                        event = ResponseEvent(
+                            timestamp=now,
+                            event_type="audio",
+                            data=f"{len(audio_payload)} bytes",
+                        )
+                        result.events.append(event)
+                        if result.first_audio_response_time is None:
+                            result.first_audio_response_time = now
+                    continue
+
+                # Text frame: JSON message
                 msg = json.loads(raw)
                 msg_type = msg.get("type", "")
 
-                if msg_type == "audio":
-                    event = ResponseEvent(
-                        timestamp=now,
-                        event_type="audio",
-                        data=f"{len(base64.b64decode(msg['data']))} bytes",
-                    )
-                    result.events.append(event)
-                    if result.first_audio_response_time is None:
-                        result.first_audio_response_time = now
-
-                elif msg_type == "transcript_in":
+                if msg_type == "transcript_in":
                     text = msg.get("text", "")
                     event = ResponseEvent(timestamp=now, event_type="transcript_in", data=text)
                     result.events.append(event)

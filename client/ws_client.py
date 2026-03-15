@@ -1,18 +1,23 @@
 """WebSocket client that connects to the Cloud Run backend."""
 
 import asyncio
-import base64
 import json
 
 import websockets
 
 
+# Binary protocol prefixes (must match backend/main.py).
+PREFIX_AUDIO_IN = b"\x01"   # client -> server: PCM audio
+PREFIX_VIDEO_IN = b"\x02"   # client -> server: JPEG video
+PREFIX_AUDIO_OUT = b"\x03"  # server -> client: PCM audio
+
+
 class TableLightClient:
     """WebSocket client that connects to the Cloud Run backend.
 
-    Sends audio/video/text to the backend and dispatches received
-    messages (audio, tool_result, transcript, interrupted) to
-    registered callbacks.
+    Uses a binary WebSocket protocol for audio/video (1-byte type prefix
+    + raw payload) and JSON text frames for text, transcripts, tool
+    results, and control messages.
     """
 
     def __init__(self, backend_url: str):
@@ -31,7 +36,7 @@ class TableLightClient:
             text_only: If True, request text-only mode (no audio I/O).
         """
         self.ws = await websockets.connect(self.backend_url)
-        # Send init message to configure session mode.
+        # Send init message to configure session mode (always JSON).
         await self.ws.send(json.dumps({"text_only": text_only}))
 
     @property
@@ -46,21 +51,19 @@ class TableLightClient:
         return True
 
     async def send_audio(self, pcm_bytes: bytes):
-        """Send audio chunk to backend."""
+        """Send audio chunk to backend as binary frame."""
         if not self.connected:
             return
-        msg = {"type": "audio", "data": base64.b64encode(pcm_bytes).decode()}
-        await self.ws.send(json.dumps(msg))
+        await self.ws.send(PREFIX_AUDIO_IN + pcm_bytes)
 
     async def send_video(self, jpeg_bytes: bytes):
-        """Send video frame to backend."""
+        """Send video frame to backend as binary frame."""
         if not self.connected:
             return
-        msg = {"type": "video", "data": base64.b64encode(jpeg_bytes).decode()}
-        await self.ws.send(json.dumps(msg))
+        await self.ws.send(PREFIX_VIDEO_IN + jpeg_bytes)
 
     async def send_text(self, text: str):
-        """Send text message to backend."""
+        """Send text message to backend as JSON text frame."""
         if not self.connected:
             return
         await self.ws.send(json.dumps({"type": "text", "text": text}))
@@ -86,15 +89,24 @@ class TableLightClient:
         self._on_refresh_view = callback
 
     async def receive_loop(self):
-        """Receive and dispatch messages from backend."""
+        """Receive and dispatch messages from backend.
+
+        Handles both binary frames (audio) and text frames (JSON).
+        """
         try:
             async for raw in self.ws:
+                # Binary frame: audio from server
+                if isinstance(raw, bytes):
+                    if len(raw) >= 1 and raw[0:1] == PREFIX_AUDIO_OUT:
+                        if self._on_audio:
+                            await self._on_audio(raw[1:])
+                    continue
+
+                # Text frame: JSON message
                 msg = json.loads(raw)
                 msg_type = msg.get("type")
 
-                if msg_type == "audio" and self._on_audio:
-                    await self._on_audio(base64.b64decode(msg["data"]))
-                elif msg_type == "tool_result":
+                if msg_type == "tool_result":
                     name = msg["name"]
                     if name == "refresh_view" and self._on_refresh_view:
                         await self._on_refresh_view()

@@ -21,7 +21,7 @@ class TestAudioConstants:
 
     def test_chunk_size(self):
         from client.audio import CHUNK_SIZE
-        assert CHUNK_SIZE == 800
+        assert CHUNK_SIZE == 320
 
     def test_playback_rate(self):
         """Gemini outputs 24kHz audio; AudioPlayer should default to 24000."""

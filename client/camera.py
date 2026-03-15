@@ -97,7 +97,7 @@ def rectify_frame(
     return cv2.warpPerspective(frame, H, (w, h))
 
 
-def encode_jpeg(frame: np.ndarray, quality: int = 85) -> bytes:
+def encode_jpeg(frame: np.ndarray, quality: int = 70) -> bytes:
     """Encode frame as JPEG bytes.
 
     Args:

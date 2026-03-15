@@ -12,7 +12,7 @@ import struct
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2  # 16-bit = 2 bytes per sample
 CHANNELS = 1
-CHUNK_SAMPLES = 800  # 50ms at 16kHz — same as client/audio.py
+CHUNK_SAMPLES = 320  # 20ms at 16kHz — same as client/audio.py
 
 
 def generate_silence(duration_s: float) -> bytes:

@@ -46,6 +46,7 @@ class OverlayManager:
         self.image_rotate = image_rotate  # how the image was rotated before Gemini saw it
         self.white_bg = white_bg
         self.canvas = self._make_bg()
+        self._has_content = False
         # Named scene gallery: title → BGR numpy array.
         self.scenes: dict[str, np.ndarray] = {}
         # Ordered list of scene names for "reference_previous".
@@ -110,6 +111,7 @@ class OverlayManager:
         if self.mode == "projector" and content_type != "highlight":
             overlay = cv2.rotate(overlay, cv2.ROTATE_180)
         self.canvas = self.place_on_canvas(overlay, placement)
+        self._has_content = True
 
     def _placement_pixel_size(self, placement: list) -> tuple[int, int]:
         """Return (width, height) in pixels for a placement box."""
@@ -338,3 +340,4 @@ class OverlayManager:
     def clear(self):
         """Clear all overlays (reset canvas to background)."""
         self.canvas = self._make_bg()
+        self._has_content = False

@@ -2,12 +2,16 @@
 
 Uses a mock Gemini Live session so no real API calls are made.
 Tests the full pipeline: client WS -> FastAPI -> mock session -> back to client.
+
+Uses the binary WebSocket protocol:
+  - Client sends binary frames: 0x01+PCM (audio), 0x02+JPEG (video)
+  - Server sends binary frames: 0x03+PCM (audio responses)
+  - JSON text frames for text, transcripts, tool results, interrupted
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
-from backend.main import app
+from backend.main import PREFIX_AUDIO_IN, PREFIX_AUDIO_OUT, PREFIX_VIDEO_IN, app
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +238,7 @@ def make_ws():
         client = TestClient(app)
         ws = client.websocket_connect("/ws/session")
         ws.__enter__()
-        # Send init message.
+        # Send init message (always JSON).
         ws.send_json({"text_only": False})
 
         class _Handle:
@@ -262,14 +266,11 @@ def make_ws():
 
 class TestAudioForwarding:
     def test_audio_forwarded_to_gemini(self, make_ws):
-        """Send audio via WS, verify mock session received it."""
+        """Send audio via binary WS frame, verify mock session received it."""
         session, ws, handle = make_ws()
         try:
             pcm = b"\x00\x01" * 800  # 1600 bytes of fake PCM
-            ws.send_json({
-                "type": "audio",
-                "data": base64.b64encode(pcm).decode(),
-            })
+            ws.send_bytes(PREFIX_AUDIO_IN + pcm)
             # Give time for the backend coroutine to process.
             import time
             time.sleep(0.5)
@@ -285,14 +286,11 @@ class TestAudioForwarding:
 
 class TestVideoForwarding:
     def test_video_forwarded_to_gemini(self, make_ws):
-        """Send video via WS, verify mock session received it."""
+        """Send video via binary WS frame, verify mock session received it."""
         session, ws, handle = make_ws()
         try:
             jpeg = b"\xff\xd8fake-jpeg"
-            ws.send_json({
-                "type": "video",
-                "data": base64.b64encode(jpeg).decode(),
-            })
+            ws.send_bytes(PREFIX_VIDEO_IN + jpeg)
             import time
             time.sleep(0.5)
 
@@ -307,7 +305,7 @@ class TestVideoForwarding:
 
 class TestTextForwarding:
     def test_text_forwarded_to_gemini(self, make_ws):
-        """Send text, verify send_client_content was called on session."""
+        """Send text via JSON, verify send_client_content was called on session."""
         session, ws, handle = make_ws()
         try:
             ws.send_json({"type": "text", "text": "What is 2+2?"})
@@ -326,7 +324,7 @@ class TestTextForwarding:
 
 class TestAudioResponse:
     def test_audio_response_forwarded_to_client(self, make_ws):
-        """Mock yields audio, client receives it via WS."""
+        """Mock yields audio, client receives it as binary WS frame."""
         audio_bytes = b"\x00\x01" * 100
         messages = [
             FakeServerMessage(
@@ -347,13 +345,12 @@ class TestAudioResponse:
         ]
         session, ws, handle = make_ws(messages)
         try:
-            # The server should push audio to us without us sending anything.
+            # The server should push audio to us as binary frame.
             import time
             time.sleep(0.5)
-            resp = ws.receive_json(mode="text")
-            assert resp["type"] == "audio"
-            decoded = base64.b64decode(resp["data"])
-            assert decoded == audio_bytes
+            resp = ws.receive_bytes()
+            assert resp[0:1] == PREFIX_AUDIO_OUT
+            assert resp[1:] == audio_bytes
         finally:
             handle.close()
 
@@ -411,7 +408,7 @@ class TestToolCallFlow:
             import time
             time.sleep(0.5)
 
-            # Client should receive the tool_result message.
+            # Client should receive the tool_result message (JSON).
             resp = ws.receive_json(mode="text")
             assert resp["type"] == "tool_result"
             assert resp["name"] == "project_overlay"

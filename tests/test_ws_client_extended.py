@@ -1,13 +1,17 @@
 """Extended tests for client/ws_client.py — TableLightClient."""
 
 import asyncio
-import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
-from client.ws_client import TableLightClient
+from client.ws_client import (
+    PREFIX_AUDIO_IN,
+    PREFIX_AUDIO_OUT,
+    PREFIX_VIDEO_IN,
+    TableLightClient,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,18 +116,17 @@ class TestSendAudio:
         c.ws.closed = False
         return c
 
-    async def test_sends_json_with_type_audio(self, client):
+    async def test_sends_binary_with_audio_prefix(self, client):
         await client.send_audio(b"\x00\x01")
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        assert msg["type"] == "audio"
+        assert isinstance(raw, bytes)
+        assert raw[0:1] == PREFIX_AUDIO_IN
 
-    async def test_base64_roundtrip(self, client):
+    async def test_payload_roundtrip(self, client):
         pcm = bytes(range(256))
         await client.send_audio(pcm)
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        assert base64.b64decode(msg["data"]) == pcm
+        assert raw[1:] == pcm
 
     async def test_does_not_send_when_disconnected(self):
         c = TableLightClient("ws://localhost:8000/ws")
@@ -140,18 +143,17 @@ class TestSendVideo:
         c.ws.closed = False
         return c
 
-    async def test_sends_json_with_type_video(self, client):
+    async def test_sends_binary_with_video_prefix(self, client):
         await client.send_video(b"\xff\xd8")
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        assert msg["type"] == "video"
+        assert isinstance(raw, bytes)
+        assert raw[0:1] == PREFIX_VIDEO_IN
 
-    async def test_base64_roundtrip(self, client):
+    async def test_payload_roundtrip(self, client):
         jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 100
         await client.send_video(jpeg)
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        assert base64.b64decode(msg["data"]) == jpeg
+        assert raw[1:] == jpeg
 
     async def test_does_not_send_when_disconnected(self):
         c = TableLightClient("ws://localhost:8000/ws")
@@ -194,9 +196,12 @@ class TestSendText:
 
 
 class _MockAsyncIterator:
-    """Mock a websocket that yields messages then stops."""
+    """Mock a websocket that yields messages then stops.
 
-    def __init__(self, messages: list[str]):
+    Accepts both str (JSON text) and bytes (binary) messages.
+    """
+
+    def __init__(self, messages: list[str | bytes]):
         self._messages = messages
         self._index = 0
 
@@ -264,9 +269,9 @@ class TestReceiveLoopMultipleMessages:
         c.on_transcript(on_transcript)
 
         msgs = [
-            json.dumps({"type": "audio", "data": base64.b64encode(b"\x01\x02").decode()}),
+            PREFIX_AUDIO_OUT + b"\x01\x02",  # binary audio
             json.dumps({"type": "transcript_in", "text": "hello"}),
-            json.dumps({"type": "audio", "data": base64.b64encode(b"\x03\x04").decode()}),
+            PREFIX_AUDIO_OUT + b"\x03\x04",  # binary audio
             json.dumps({"type": "transcript_out", "text": "hi back"}),
         ]
         c.ws = _MockAsyncIterator(msgs)
@@ -283,7 +288,7 @@ class TestReceiveLoopNoCallback:
         """Messages should be silently dropped if no callback is registered."""
         c = TableLightClient("ws://localhost:8000/ws")
         msgs = [
-            json.dumps({"type": "audio", "data": base64.b64encode(b"\x01").decode()}),
+            PREFIX_AUDIO_OUT + b"\x01",  # binary audio
             json.dumps({"type": "transcript_in", "text": "hello"}),
             json.dumps({"type": "interrupted"}),
         ]

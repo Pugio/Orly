@@ -18,7 +18,7 @@ except (ImportError, OSError):
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
-CHUNK_SIZE = 800  # 50ms of audio at 16kHz (lower = less latency)
+CHUNK_SIZE = 320  # 20ms of audio at 16kHz (lower = less latency, faster VAD)
 _FORMAT = pyaudio.paInt16 if _PA_AVAILABLE else 8  # paInt16 == 8
 
 

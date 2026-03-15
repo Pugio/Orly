@@ -1,68 +1,81 @@
 """Tests for backend WebSocket server message parsing and formatting."""
 
-import base64
+import json
 
 import pytest
 
 from backend.main import (
+    PREFIX_AUDIO_IN,
+    PREFIX_AUDIO_OUT,
+    PREFIX_VIDEO_IN,
     execute_tool,
     format_audio_response,
     format_interrupted,
     format_tool_result,
     format_transcript,
-    parse_client_message,
+    parse_binary_message,
+    parse_text_message,
 )
 
 
 # ---------------------------------------------------------------------------
-# parse_client_message
+# parse_binary_message
 # ---------------------------------------------------------------------------
 
 
-class TestParseClientMessage:
-    """Tests for parse_client_message."""
+class TestParseBinaryMessage:
+    """Tests for parse_binary_message."""
 
     def test_audio_message(self):
         raw = b"\x00\x01\x02\x03"
-        msg = {"type": "audio", "data": base64.b64encode(raw).decode()}
-        msg_type, payload = parse_client_message(msg)
+        data = PREFIX_AUDIO_IN + raw
+        msg_type, payload = parse_binary_message(data)
         assert msg_type == "audio"
         assert payload == raw
 
     def test_video_message(self):
         raw = b"\xff\xd8\xff\xe0"  # JPEG magic bytes
-        msg = {"type": "video", "data": base64.b64encode(raw).decode()}
-        msg_type, payload = parse_client_message(msg)
+        data = PREFIX_VIDEO_IN + raw
+        msg_type, payload = parse_binary_message(data)
         assert msg_type == "video"
         assert payload == raw
 
+    def test_unknown_prefix_raises(self):
+        with pytest.raises(ValueError, match="Unknown binary prefix"):
+            parse_binary_message(b"\xff\x00\x01")
+
+    def test_too_short_raises(self):
+        with pytest.raises(ValueError, match="too short"):
+            parse_binary_message(b"\x01")
+
+
+# ---------------------------------------------------------------------------
+# parse_text_message
+# ---------------------------------------------------------------------------
+
+
+class TestParseTextMessage:
+    """Tests for parse_text_message."""
+
     def test_text_message(self):
-        msg = {"type": "text", "text": "What is 2+2?"}
-        msg_type, payload = parse_client_message(msg)
+        data = json.dumps({"type": "text", "text": "What is 2+2?"})
+        msg_type, payload = parse_text_message(data)
         assert msg_type == "text"
         assert payload == "What is 2+2?"
 
     def test_close_message(self):
-        msg = {"type": "close"}
-        msg_type, payload = parse_client_message(msg)
+        data = json.dumps({"type": "close"})
+        msg_type, payload = parse_text_message(data)
         assert msg_type == "close"
         assert payload is None
 
     def test_missing_type_raises(self):
         with pytest.raises(ValueError, match="type"):
-            parse_client_message({"data": "abc"})
+            parse_text_message(json.dumps({"data": "abc"}))
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="Unknown"):
-            parse_client_message({"type": "invalid"})
-
-    def test_audio_missing_data_raises(self):
-        with pytest.raises(ValueError, match="data"):
-            parse_client_message({"type": "audio"})
-
-    def test_video_missing_data_raises(self):
-        with pytest.raises(ValueError, match="data"):
-            parse_client_message({"type": "video"})
+            parse_text_message(json.dumps({"type": "audio"}))
 
 
 # ---------------------------------------------------------------------------
@@ -73,16 +86,18 @@ class TestParseClientMessage:
 class TestFormatAudioResponse:
     """Tests for format_audio_response."""
 
-    def test_structure(self):
+    def test_returns_bytes(self):
         result = format_audio_response(b"\x00\x01")
-        assert result["type"] == "audio"
-        assert "data" in result
+        assert isinstance(result, bytes)
+
+    def test_has_prefix(self):
+        result = format_audio_response(b"\x00\x01")
+        assert result[0:1] == PREFIX_AUDIO_OUT
 
     def test_round_trip(self):
         original = b"\xde\xad\xbe\xef" * 100
         result = format_audio_response(original)
-        decoded = base64.b64decode(result["data"])
-        assert decoded == original
+        assert result[1:] == original
 
 
 # ---------------------------------------------------------------------------

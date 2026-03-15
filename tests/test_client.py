@@ -1,7 +1,6 @@
 """Tests for edge client modules: ws_client, camera, overlay_manager."""
 
 import asyncio
-import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,13 +8,15 @@ import cv2
 import numpy as np
 import pytest
 
+from client.ws_client import PREFIX_AUDIO_IN, PREFIX_AUDIO_OUT, PREFIX_VIDEO_IN
+
 # ---------------------------------------------------------------------------
 # WebSocket client tests
 # ---------------------------------------------------------------------------
 
 
 class TestTableLightClientSendAudio:
-    """send_audio creates correct JSON with base64 data."""
+    """send_audio sends binary frame with 0x01 prefix."""
 
     @pytest.fixture
     def client(self):
@@ -24,24 +25,22 @@ class TestTableLightClientSendAudio:
         c.ws = AsyncMock()
         return c
 
-    async def test_send_audio_message_type(self, client):
+    async def test_send_audio_binary_prefix(self, client):
         pcm = b"\x00\x01\x02\x03"
         await client.send_audio(pcm)
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        assert msg["type"] == "audio"
+        assert isinstance(raw, bytes)
+        assert raw[0:1] == PREFIX_AUDIO_IN
 
-    async def test_send_audio_base64_data(self, client):
+    async def test_send_audio_payload(self, client):
         pcm = b"\x00\x01\x02\x03"
         await client.send_audio(pcm)
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        decoded = base64.b64decode(msg["data"])
-        assert decoded == pcm
+        assert raw[1:] == pcm
 
 
 class TestTableLightClientSendVideo:
-    """send_video creates correct JSON with base64 data."""
+    """send_video sends binary frame with 0x02 prefix."""
 
     @pytest.fixture
     def client(self):
@@ -50,20 +49,18 @@ class TestTableLightClientSendVideo:
         c.ws = AsyncMock()
         return c
 
-    async def test_send_video_message_type(self, client):
+    async def test_send_video_binary_prefix(self, client):
         jpeg = b"\xff\xd8\xff\xe0fake_jpeg"
         await client.send_video(jpeg)
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        assert msg["type"] == "video"
+        assert isinstance(raw, bytes)
+        assert raw[0:1] == PREFIX_VIDEO_IN
 
-    async def test_send_video_base64_data(self, client):
+    async def test_send_video_payload(self, client):
         jpeg = b"\xff\xd8\xff\xe0fake_jpeg"
         await client.send_video(jpeg)
         raw = client.ws.send.call_args[0][0]
-        msg = json.loads(raw)
-        decoded = base64.b64decode(msg["data"])
-        assert decoded == jpeg
+        assert raw[1:] == jpeg
 
 
 class TestTableLightClientSendText:
@@ -96,15 +93,15 @@ class TestTableLightClientReceiveLoop:
     async def test_dispatch_audio(self, client):
         received = []
         audio_data = b"\x00\x01\x02"
-        msg = json.dumps({"type": "audio", "data": base64.b64encode(audio_data).decode()})
 
         async def on_audio(data):
             received.append(data)
 
         client.on_audio(on_audio)
 
-        # Mock ws as an async iterator that yields one message then stops
-        client.ws = MockAsyncIterator([msg])
+        # Binary frame: PREFIX_AUDIO_OUT + audio_data
+        binary_msg = PREFIX_AUDIO_OUT + audio_data
+        client.ws = MockAsyncIterator([binary_msg])
         await client.receive_loop()
 
         assert len(received) == 1
@@ -170,9 +167,12 @@ class TestTableLightClientReceiveLoop:
 
 
 class MockAsyncIterator:
-    """Mock a websocket connection that yields messages then stops."""
+    """Mock a websocket connection that yields messages then stops.
 
-    def __init__(self, messages: list[str]):
+    Accepts both str (JSON text) and bytes (binary) messages.
+    """
+
+    def __init__(self, messages: list[str | bytes]):
         self._messages = messages
         self._index = 0
 
@@ -449,6 +449,15 @@ class TestOverlayManagerClear:
         # Now clear
         mgr.clear()
         assert mgr.canvas.max() == 0, "Canvas should be all black after clear"
+        assert mgr._has_content is False
+
+    def test_has_content_flag_after_clear(self):
+        from client.overlay_manager import OverlayManager
+
+        mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, mode="screen")
+        mgr._has_content = True
+        mgr.clear()
+        assert mgr._has_content is False
 
 
 class TestOverlayManagerHandleToolResult:
@@ -466,6 +475,7 @@ class TestOverlayManagerHandleToolResult:
         mgr.handle_tool_result("project_overlay", result)
         # Canvas should have content
         assert mgr.canvas.max() > 0
+        assert mgr._has_content is True
 
     def test_handle_non_overlay_tool_is_ignored(self):
         from client.overlay_manager import OverlayManager
@@ -474,3 +484,4 @@ class TestOverlayManagerHandleToolResult:
         # Should not raise for unknown tool names
         mgr.handle_tool_result("some_other_tool", {"foo": "bar"})
         assert mgr.canvas.max() == 0
+        assert mgr._has_content is False

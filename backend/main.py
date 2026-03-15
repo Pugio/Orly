@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import inspect
+import json
 import logging
 import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,46 +18,64 @@ app = FastAPI(title="TableLight Backend")
 
 
 # ---------------------------------------------------------------------------
+# Binary WebSocket protocol constants
+# ---------------------------------------------------------------------------
+
+PREFIX_AUDIO_IN = b"\x01"   # client -> server: PCM audio
+PREFIX_VIDEO_IN = b"\x02"   # client -> server: JPEG video
+PREFIX_AUDIO_OUT = b"\x03"  # server -> client: PCM audio
+
+
+# ---------------------------------------------------------------------------
 # Pure message helpers (testable without Gemini SDK)
 # ---------------------------------------------------------------------------
 
-_BINARY_TYPES = {"audio", "video"}
-_ALL_TYPES = {"audio", "video", "text", "close"}
 
-
-def parse_client_message(data: dict) -> tuple[str, bytes | str | None]:
-    """Parse a message from the edge client.
+def parse_binary_message(data: bytes) -> tuple[str, bytes]:
+    """Parse a binary WebSocket frame from the edge client.
 
     Returns (message_type, payload).
-    message_type: "audio", "video", "text", "close"
-    payload: decoded bytes for audio/video, string for text, None for close.
+    message_type: "audio" or "video".
+    payload: raw bytes (PCM or JPEG).
+    Raises ValueError for unknown prefix.
+    """
+    if len(data) < 2:
+        raise ValueError("Binary message too short.")
+    prefix = data[0:1]
+    payload = data[1:]
+    if prefix == PREFIX_AUDIO_IN:
+        return "audio", payload
+    elif prefix == PREFIX_VIDEO_IN:
+        return "video", payload
+    else:
+        raise ValueError(f"Unknown binary prefix: 0x{prefix[0]:02x}")
+
+
+def parse_text_message(data: str) -> tuple[str, str | None]:
+    """Parse a text (JSON) WebSocket frame from the edge client.
+
+    Returns (message_type, payload).
+    message_type: "text" or "close".
+    payload: string for text, None for close.
     Raises ValueError for invalid messages.
     """
-    if "type" not in data:
+    msg = json.loads(data)
+    msg_type = msg.get("type")
+    if msg_type is None:
         raise ValueError("Message missing required 'type' field.")
-
-    msg_type = data["type"]
-    if msg_type not in _ALL_TYPES:
-        raise ValueError(f"Unknown message type: '{msg_type}'.")
-
-    if msg_type in _BINARY_TYPES:
-        if "data" not in data:
-            raise ValueError(f"Message type '{msg_type}' requires a 'data' field.")
-        return msg_type, base64.b64decode(data["data"])
-
     if msg_type == "text":
-        return "text", data.get("text", "")
+        return "text", msg.get("text", "")
+    if msg_type == "close":
+        return "close", None
+    raise ValueError(f"Unknown text message type: '{msg_type}'.")
 
-    # close
-    return "close", None
 
+def format_audio_response(audio_data: bytes) -> bytes:
+    """Format an audio response as a binary frame for the edge client.
 
-def format_audio_response(audio_data: bytes) -> dict:
-    """Format an audio response for the edge client.
-
-    Returns {"type": "audio", "data": base64_encoded_string}
+    Returns PREFIX_AUDIO_OUT + raw PCM bytes.
     """
-    return {"type": "audio", "data": base64.b64encode(audio_data).decode()}
+    return PREFIX_AUDIO_OUT + audio_data
 
 
 def format_transcript(direction: str, text: str) -> dict:
@@ -166,7 +185,7 @@ async def session_endpoint(websocket: WebSocket) -> None:
 
     await websocket.accept()
 
-    # Read init message from client.
+    # Read init message from client (always JSON text).
     init_msg = await websocket.receive_json()
     text_only = init_msg.get("text_only", False)
     logger.info("Session started (text_only=%s)", text_only)
@@ -191,8 +210,8 @@ async def session_endpoint(websocket: WebSocket) -> None:
                 disabled=False,
                 start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
                 end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                prefix_padding_ms=200,
-                silence_duration_ms=500,
+                prefix_padding_ms=50,
+                silence_duration_ms=300,
             )
         ),
         input_audio_transcription={},
@@ -247,15 +266,14 @@ async def session_endpoint(websocket: WebSocket) -> None:
             async def send_from_client() -> None:
                 """Read from WebSocket, forward audio/video/text to Gemini.
 
-                Audio and video are sent via send_realtime_input with separate
-                audio= and video= kwargs, so they travel as independent
-                concurrent streams — no FIFO serialization.
+                Binary frames: 0x01+PCM = audio, 0x02+JPEG = video.
+                Text frames: JSON with type "text" or "close".
                 """
                 try:
                     while not client_done.is_set():
                         try:
-                            raw = await asyncio.wait_for(
-                                websocket.receive_json(), timeout=0.5
+                            ws_msg = await asyncio.wait_for(
+                                websocket.receive(), timeout=0.5
                             )
                         except asyncio.TimeoutError:
                             continue
@@ -263,29 +281,40 @@ async def session_endpoint(websocket: WebSocket) -> None:
                             client_done.set()
                             return
 
-                        msg_type, payload = parse_client_message(raw)
-
-                        if msg_type == "audio":
-                            blob = types.Blob(
-                                data=payload, mime_type="audio/pcm;rate=16000"
-                            )
-                            await session.send_realtime_input(audio=blob)
-                        elif msg_type == "video":
-                            blob = types.Blob(
-                                data=payload, mime_type="image/jpeg"
-                            )
-                            await session.send_realtime_input(video=blob)
-                        elif msg_type == "text":
-                            await session.send_client_content(
-                                turns=types.Content(
-                                    role="user",
-                                    parts=[types.Part(text=payload)],
-                                ),
-                                turn_complete=True,
-                            )
-                        elif msg_type == "close":
+                        if ws_msg.get("type") == "websocket.disconnect":
                             client_done.set()
                             return
+
+                        # Binary frame
+                        if "bytes" in ws_msg and ws_msg["bytes"] is not None:
+                            raw_bytes = ws_msg["bytes"]
+                            msg_type, payload = parse_binary_message(raw_bytes)
+                            if msg_type == "audio":
+                                blob = types.Blob(
+                                    data=payload, mime_type="audio/pcm;rate=16000"
+                                )
+                                await session.send_realtime_input(audio=blob)
+                            elif msg_type == "video":
+                                blob = types.Blob(
+                                    data=payload, mime_type="image/jpeg"
+                                )
+                                await session.send_realtime_input(video=blob)
+
+                        # Text frame
+                        elif "text" in ws_msg and ws_msg["text"] is not None:
+                            raw_text = ws_msg["text"]
+                            msg_type, payload = parse_text_message(raw_text)
+                            if msg_type == "text":
+                                await session.send_client_content(
+                                    turns=types.Content(
+                                        role="user",
+                                        parts=[types.Part(text=payload)],
+                                    ),
+                                    turn_complete=True,
+                                )
+                            elif msg_type == "close":
+                                client_done.set()
+                                return
                 except WebSocketDisconnect:
                     client_done.set()
                 except Exception:
@@ -384,7 +413,7 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                     )
                                 ):
                                     try:
-                                        await websocket.send_json(
+                                        await websocket.send_bytes(
                                             format_audio_response(
                                                 part.inline_data.data
                                             )

@@ -97,16 +97,16 @@ class TestGenerateSine:
 
 class TestChunkAudio:
     def test_exact_chunks(self):
-        """1 second = exactly 20 chunks of 800 samples."""
+        """1 second = exactly 50 chunks of 320 samples."""
         pcm = generate_silence(1.0)
         chunks = chunk_audio(pcm)
-        assert len(chunks) == 20
+        assert len(chunks) == 50
         assert all(len(c) == CHUNK_SAMPLES * SAMPLE_WIDTH for c in chunks)
 
     def test_last_chunk_padded(self):
         """Partial last chunk is zero-padded."""
-        # 900 samples = 1 full chunk + 100 samples leftover
-        pcm = generate_silence(900 / SAMPLE_RATE)
+        # 400 samples = 1 full chunk (320) + 80 samples leftover
+        pcm = generate_silence(400 / SAMPLE_RATE)
         chunks = chunk_audio(pcm)
         assert len(chunks) == 2
         assert len(chunks[1]) == CHUNK_SAMPLES * SAMPLE_WIDTH
@@ -131,7 +131,7 @@ class TestChunkAudio:
 
     def test_roundtrip_content(self):
         """Chunking should preserve the original audio content."""
-        pcm = generate_sine(440.0, 0.05)  # exactly 800 samples = 1 chunk
+        pcm = generate_sine(440.0, 0.02)  # exactly 320 samples = 1 chunk
         chunks = chunk_audio(pcm)
         assert len(chunks) == 1
         assert chunks[0] == pcm

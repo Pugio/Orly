@@ -80,13 +80,10 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 await asyncio.sleep(interval)
                 continue
 
-        # Check if overlays are active on the canvas.
+        # Check if overlays are active on the canvas (cached flag, no array scan).
         has_content = False
         if overlay_manager and not overlay_manager._refresh_requested:
-            if overlay_manager.white_bg:
-                has_content = not np.all(overlay_manager.canvas == 255)
-            else:
-                has_content = np.any(overlay_manager.canvas > 0)
+            has_content = overlay_manager._has_content
 
         if has_content and last_clean_frame:
             await client.send_video(last_clean_frame)
