@@ -230,6 +230,8 @@ class _RunningProgram:
         if self.error:
             return "error"
         if self.api.stopped:
+            if self.thread.is_alive():
+                return "stopping"
             return "stopped"
         if self.thread.is_alive():
             return "running"
