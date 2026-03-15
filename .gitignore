@@ -4,5 +4,12 @@ __pycache__/
 .venv/
 .env
 *.npz
-rectified_output.png
 .pytest_cache/
+
+# Calibration / debug artifacts
+rectified_output.png
+rectified_output_rotated.png
+debug_*.png
+debug_*.jpg
+poc4_output*.png
+poc5_output*.png

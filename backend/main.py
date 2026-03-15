@@ -173,32 +173,12 @@ async def session_endpoint(websocket: WebSocket) -> None:
 
     async def send_to_client() -> None:
         """Run ADK agent, forward events to edge client."""
-        print("[BACKEND] send_to_client starting run_live...")
         try:
             async for event in runner.run_live(
                 session=session,
                 live_request_queue=live_request_queue,
                 run_config=run_config,
             ):
-                # Debug: log event summary
-                parts_summary = []
-                if event.content and event.content.parts:
-                    for p in event.content.parts:
-                        if p.inline_data:
-                            parts_summary.append(f"inline_data({p.inline_data.mime_type})")
-                        if p.text:
-                            parts_summary.append(f"text({p.text[:50]})")
-                        if p.function_call:
-                            parts_summary.append(f"function_call({p.function_call.name})")
-                        if p.function_response:
-                            parts_summary.append(f"function_response({p.function_response.name})")
-                if parts_summary:
-                    print(f"[BACKEND] Event: {', '.join(parts_summary)}")
-                if event.input_transcription:
-                    print(f"[BACKEND] Input: {event.input_transcription.text[:80]}")
-                if event.output_transcription:
-                    print(f"[BACKEND] Output: {event.output_transcription.text[:80]}")
-
                 # Process content parts: audio, function calls/responses.
                 if event.content and event.content.parts:
                     for part in event.content.parts:

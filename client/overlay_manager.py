@@ -67,11 +67,7 @@ class OverlayManager:
 
         self.canvas = self.place_on_canvas(overlay, placement)
 
-        # Debug: save canvas and log
-        non_black = np.count_nonzero(self.canvas)
-        print(f"[OverlayManager] Rendered {content_type}, placement={placement}, "
-              f"canvas non-black pixels: {non_black}")
-        cv2.imwrite("debug_canvas.png", self.canvas)
+        print(f"[OverlayManager] Rendered {content_type} at {placement}")
 
     def render_overlay(
         self,

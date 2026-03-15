@@ -140,7 +140,6 @@ def find_bright_centroid(
     cv2.drawContours(c_mask, [best], 0, 255, -1)
     mean_val = cv2.mean(diff, mask=c_mask)[0]
     blob_area = cv2.contourArea(best)
-    print(f"    [debug] blob area={blob_area:.0f}, mean brightness={mean_val:.0f}")
     if blob_area < 200:
         return None  # Too small — probably not the projected dot
 
@@ -410,15 +409,6 @@ def main():
 
         # Find centroid
         centroid = find_bright_centroid(frame, background)
-
-        # Save debug images for ALL dots
-        cv2.imwrite(f"debug_cal_frame_{i}.png", frame)
-        diff = cv2.absdiff(frame, background)
-        cv2.imwrite(f"debug_cal_diff_{i}.png", diff)
-        if centroid:
-            debug = frame.copy()
-            cv2.circle(debug, (int(centroid[0]), int(centroid[1])), 10, (0, 0, 255), 2)
-            cv2.imwrite(f"debug_cal_centroid_{i}.png", debug)
 
         if centroid is None:
             print(f"  WARNING: No bright region found, skipping dot {i + 1}")

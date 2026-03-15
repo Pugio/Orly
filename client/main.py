@@ -60,16 +60,6 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 last_clean_frame = jpeg_bytes
                 await client.send_video(jpeg_bytes)
             frame_count += 1
-            # Save first few frames for debugging
-            if frame_count <= 3:
-                try:
-                    import os
-                    path = os.path.join(os.getcwd(), f"debug_sent_frame_{frame_count}.jpg")
-                    with open(path, "wb") as f:
-                        f.write(jpeg_bytes)
-                    print(f"[TableLight] Saved frame to {path} ({len(jpeg_bytes)} bytes)")
-                except Exception as e:
-                    print(f"[TableLight] Failed to save frame: {e}")
         await asyncio.sleep(interval)
 
 
@@ -141,8 +131,6 @@ async def display_loop(overlay_manager: OverlayManager, mode: str):
             show_on_laptop(win_name, canvas)
         cv2.waitKey(1)
         frame_count += 1
-        if has_content and frame_count % 50 == 0:
-            print(f"[Display] Frame {frame_count}, canvas non-black: {np.count_nonzero(canvas)}")
         await asyncio.sleep(0.05)  # ~20fps, yield to event loop
 
 
@@ -394,16 +382,8 @@ def run():
                 else:
                     show_on_laptop(win_name, canvas)
                 frame_n += 1
-                if frame_n == 1:
-                    print("[Display] First frame sent to projector.")
-                has_content = np.any(canvas > 0)
-                if has_content and frame_n % 20 == 0:
-                    print(f"[Display] Frame {frame_n}, non-black: {np.count_nonzero(canvas)}, "
-                          f"max: {canvas.max()}, shape: {canvas.shape}")
-                    cv2.imwrite("debug_main_thread_canvas.png", canvas)
             else:
-                if frame_n == 0:
-                    print("[Display] Waiting for overlay_manager...")
+                pass
             cv2.waitKey(50)
     except KeyboardInterrupt:
         print("\n[TableLight] Shutting down...")
