@@ -99,9 +99,10 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 overlay_manager.last_clean_frame = jpeg_bytes
             await client.send_video(jpeg_bytes)
 
-        # Pass raw frame to programs and object tracking (no JPEG decode).
+        # Offload tracker/program work to thread pool so it doesn't block
+        # the async transport loop (slow tracking shouldn't delay frame sending).
         if program_runtime and raw_frame is not None:
-            program_runtime.process_frame(raw_frame)
+            loop.run_in_executor(None, program_runtime.process_frame, raw_frame)
 
         await asyncio.sleep(interval)
 
