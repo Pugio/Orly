@@ -29,7 +29,11 @@ import numpy as np
 from client.audio import AudioCapture, AudioPlayer
 from client.camera import CameraCapture
 from client.display import show_on_projector, show_on_laptop, get_projector_resolution
+from client.object_tracker import ObjectTracker
 from client.overlay_manager import OverlayManager
+from client.overlay_state import OverlayStateManager
+from client.program_runtime import ProgramRuntime, TableAPI
+from client.session_store import SessionStore
 from client.ws_client import TableLightClient
 
 logger = logging.getLogger(__name__)
@@ -41,7 +45,8 @@ logger = logging.getLogger(__name__)
 
 
 async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float,
-                     overlay_manager: OverlayManager = None):
+                     overlay_manager: OverlayManager = None,
+                     program_runtime: ProgramRuntime = None):
     """Capture and send video frames at the specified FPS.
 
     When overlays are active, sends the last clean frame instead of
@@ -53,7 +58,7 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
     interval = 1.0 / fps
     last_clean_frame = None
     refresh_wait_frames = 0  # countdown after refresh request
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while True:
         # Run blocking camera capture in executor so it doesn't stall
         # the event loop (audio send/receive must keep flowing).
@@ -92,6 +97,14 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
             if overlay_manager:
                 overlay_manager.last_clean_frame = jpeg_bytes
             await client.send_video(jpeg_bytes)
+
+        # Dispatch frame to running programs for object tracking & callbacks.
+        if program_runtime and jpeg_bytes:
+            frame_arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+            decoded = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
+            if decoded is not None:
+                program_runtime.process_frame(decoded)
+
         await asyncio.sleep(interval)
 
 
@@ -257,6 +270,22 @@ async def main(args: argparse.Namespace | None = None):
         H_proj, proj_width, proj_height = load_projector_homography(args.h_proj)
         print(f"[TableLight] Loaded projector homography from {args.h_proj}")
 
+    # --- Session store ---
+    session_store = SessionStore()
+    print("[TableLight] Session store ready.")
+
+    # --- WebSocket client (created early so notify_fn can reference it) ---
+    client = TableLightClient(args.backend)
+
+    # Notification function: sends async updates to backend (and thus to Gemini).
+    _event_loop = asyncio.get_running_loop()
+
+    def _send_notification(text: str):
+        """Thread-safe notification sender (called from background threads)."""
+        asyncio.run_coroutine_threadsafe(
+            client.send_notification("system", text), _event_loop
+        )
+
     # --- Overlay manager ---
     overlay_manager = OverlayManager(
         H_proj=H_proj,
@@ -265,8 +294,37 @@ async def main(args: argparse.Namespace | None = None):
         mode=args.mode,
         image_rotate=args.rotate,
         white_bg=args.white_bg,
+        session_store=session_store,
+        notify_fn=_send_notification,
     )
     _shared_state["overlay_manager"] = overlay_manager
+
+    # --- Overlay state manager (named overlay tracking) ---
+    overlay_state = OverlayStateManager(overlay_manager)
+
+    # --- Object tracker ---
+    object_tracker = ObjectTracker()
+
+    # --- Program runtime ---
+    # Latest decoded frame, updated by video_loop.
+    _latest_frame = {"frame": None}
+
+    def _make_table_api():
+        """Factory: creates a fresh TableAPI for each program."""
+        def _program_notify(msg):
+            asyncio.run_coroutine_threadsafe(
+                client.send_notification("program", msg), _event_loop
+            )
+        return TableAPI(
+            overlay_state_manager=overlay_state,
+            object_tracker=object_tracker,
+            session_store=session_store,
+            notify_fn=_program_notify,
+            get_frame_fn=lambda: _latest_frame["frame"],
+        )
+
+    program_runtime = ProgramRuntime(table_api_factory=_make_table_api)
+    _shared_state["program_runtime"] = program_runtime
 
     # --- Audio ---
     audio_capture = None
@@ -280,9 +338,6 @@ async def main(args: argparse.Namespace | None = None):
         audio_player = AudioPlayer()
         audio_player.start()
         print("[TableLight] Audio playback started.")
-
-    # --- WebSocket client ---
-    client = TableLightClient(args.backend)
 
     # Register callbacks
     async def on_audio(audio_bytes: bytes):
@@ -319,11 +374,38 @@ async def main(args: argparse.Namespace | None = None):
     async def on_refresh_view():
         overlay_manager.request_refresh()
 
+    async def on_run_program(name: str, code: str, description: str):
+        status = program_runtime.run(name, code, description)
+        print(f"[TableLight] Program '{name}' → {status.state}")
+        if status.error:
+            await client.send_notification("program", f"Program '{name}' error: {status.error}")
+        else:
+            await client.send_notification("program", f"Program '{name}' started: {description}")
+
+    async def on_stop_program(name: str):
+        stopped = program_runtime.stop(name)
+        print(f"[TableLight] Stop program '{name}' → {'ok' if stopped else 'not found'}")
+        await client.send_notification("program", f"Program '{name}' stopped.")
+
+    async def on_get_overlay_state():
+        state = overlay_state.to_json()
+        state["ascii_grid"] = overlay_state.to_ascii()
+        state["programs"] = [
+            {"name": p.name, "state": p.state, "description": p.description}
+            for p in program_runtime.list_programs()
+        ]
+        # Send state back as a notification so Gemini can see it.
+        import json
+        await client.send_notification("overlay_state", json.dumps(state, default=str))
+
     client.on_audio(on_audio)
     client.on_tool_result(on_tool_result)
     client.on_transcript(on_transcript)
     client.on_interrupted(on_interrupted)
     client.on_refresh_view(on_refresh_view)
+    client.on_run_program(on_run_program)
+    client.on_stop_program(on_stop_program)
+    client.on_get_overlay_state(on_get_overlay_state)
 
     # --- Connect ---
     print(f"[TableLight] Connecting to backend at {args.backend} ...")
@@ -332,7 +414,7 @@ async def main(args: argparse.Namespace | None = None):
 
     # --- Build task list (NO display_loop — OpenCV runs on main thread) ---
     tasks = [
-        asyncio.create_task(video_loop(camera, client, args.fps, overlay_manager), name="video"),
+        asyncio.create_task(video_loop(camera, client, args.fps, overlay_manager, program_runtime), name="video"),
         asyncio.create_task(client.receive_loop(), name="receive"),
     ]
 
@@ -358,6 +440,7 @@ async def main(args: argparse.Namespace | None = None):
     except asyncio.CancelledError:
         pass
     finally:
+        program_runtime.stop_all()
         await client.close()
         camera.stop()
         if audio_capture:

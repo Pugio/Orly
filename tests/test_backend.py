@@ -77,6 +77,22 @@ class TestParseTextMessage:
         with pytest.raises(ValueError, match="Unknown"):
             parse_text_message(json.dumps({"type": "audio"}))
 
+    def test_notification_message(self):
+        data = json.dumps({"type": "notification", "source": "image_gen", "text": "Image ready"})
+        msg_type, payload = parse_text_message(data)
+        assert msg_type == "notification"
+        parsed = json.loads(payload)
+        assert parsed["source"] == "image_gen"
+        assert parsed["text"] == "Image ready"
+
+    def test_notification_missing_fields(self):
+        data = json.dumps({"type": "notification"})
+        msg_type, payload = parse_text_message(data)
+        assert msg_type == "notification"
+        parsed = json.loads(payload)
+        assert parsed["source"] == ""
+        assert parsed["text"] == ""
+
 
 # ---------------------------------------------------------------------------
 # format_audio_response

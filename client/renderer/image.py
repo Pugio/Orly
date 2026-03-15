@@ -1,4 +1,4 @@
-"""Generate images via Gemini (Nano Banana 2) and render for projector overlay.
+"""Generate images via Gemini and render for projector overlay.
 
 Uses gemini-3.1-flash-image-preview to generate images from text prompts.
 Falls back to a text annotation if generation fails.
@@ -9,12 +9,24 @@ import os
 import cv2
 import numpy as np
 
+ENHANCE_PREFIX = (
+    "The student has drawn something on their paper. Enhance and build upon "
+    "their drawing — do NOT replace it. Closely preserve their original lines, "
+    "shapes, and intent. Add detail, color, and refinement while keeping their "
+    "vision intact. "
+)
+
+
+_genai_client_cache = {}
+
 
 def _get_genai_client():
-    """Lazy-create a google.genai client with the current API key.
+    """Get or create a cached google.genai client.
 
     Checks env vars first, then falls back to `llm keys get gemini`.
     """
+    if "client" in _genai_client_cache:
+        return _genai_client_cache["client"]
     from google import genai
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -27,7 +39,9 @@ def _get_genai_client():
             pass
     if not api_key:
         raise RuntimeError("No Gemini API key found. Set GOOGLE_API_KEY or run `llm keys set gemini`.")
-    return genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key)
+    _genai_client_cache["client"] = client
+    return client
 
 
 def render_loading(prompt: str, width: int, height: int) -> np.ndarray:
@@ -90,6 +104,7 @@ def render_image(
     height: int,
     reference_frame: np.ndarray | None = None,
     style: str = "default",
+    enhance: bool = False,
 ) -> np.ndarray:
     """Generate an image from a text prompt and return it sized for overlay.
 
@@ -116,6 +131,9 @@ def render_image(
 
         template = _STYLE_PROMPTS.get(style, _STYLE_PROMPTS["default"])
         text_prompt = template.format(prompt=prompt)
+
+        if enhance and style == "default":
+            text_prompt = ENHANCE_PREFIX + text_prompt
 
         if reference_frame is not None:
             # Encode reference frame as JPEG for the API.

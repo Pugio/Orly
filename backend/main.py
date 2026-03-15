@@ -9,7 +9,6 @@ import logging
 import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from starlette.websockets import WebSocketState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -67,6 +66,10 @@ def parse_text_message(data: str) -> tuple[str, str | None]:
         return "text", msg.get("text", "")
     if msg_type == "close":
         return "close", None
+    if msg_type == "notification":
+        return "notification", json.dumps(
+            {"source": msg.get("source", ""), "text": msg.get("text", "")}
+        )
     raise ValueError(f"Unknown text message type: '{msg_type}'.")
 
 
@@ -312,6 +315,20 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                     ),
                                     turn_complete=True,
                                 )
+                            elif msg_type == "notification":
+                                notif = json.loads(payload)
+                                source = notif.get("source", "unknown")
+                                text = notif.get("text", "")
+                                notification_text = (
+                                    f"[NOTIFICATION from {source}]: {text}"
+                                )
+                                await session.send_client_content(
+                                    turns=types.Content(
+                                        role="user",
+                                        parts=[types.Part(text=notification_text)],
+                                    ),
+                                    turn_complete=True,
+                                )
                             elif msg_type == "close":
                                 client_done.set()
                                 return
@@ -373,6 +390,22 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                     )
                                 except Exception:
                                     pass
+                                # Forward program/state tools to client
+                                # as dedicated message types.
+                                if fn_name in (
+                                    "run_program",
+                                    "stop_program",
+                                    "list_programs",
+                                    "get_overlay_state",
+                                ):
+                                    try:
+                                        forward_msg = {
+                                            "type": fn_name,
+                                            **fn_args,
+                                        }
+                                        await websocket.send_json(forward_msg)
+                                    except Exception:
+                                        pass
                                 responses.append(
                                     types.FunctionResponse(
                                         name=fn_name,

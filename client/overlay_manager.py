@@ -38,6 +38,8 @@ class OverlayManager:
         mode: str = "screen",
         image_rotate: int = 0,
         white_bg: bool = False,
+        session_store=None,
+        notify_fn=None,
     ):
         self.H_proj = H_proj
         self.proj_width = proj_width
@@ -45,6 +47,8 @@ class OverlayManager:
         self.mode = mode
         self.image_rotate = image_rotate  # how the image was rotated before Gemini saw it
         self.white_bg = white_bg
+        self.session_store = session_store
+        self.notify_fn = notify_fn
         self.canvas = self._make_bg()
         self._has_content = False
         # Named scene gallery: title → BGR numpy array.
@@ -142,7 +146,8 @@ class OverlayManager:
                 frame_bytes = np.frombuffer(self.last_clean_frame, dtype=np.uint8)
                 ref_frame = cv2.imdecode(frame_bytes, cv2.IMREAD_COLOR)
 
-            overlay = render_image(prompt, w, h, reference_frame=ref_frame, style=style)
+            enhance = include_view and ref_frame is not None
+            overlay = render_image(prompt, w, h, reference_frame=ref_frame, style=style, enhance=enhance)
 
             # Save to scene gallery by title.
             self.scenes[title] = overlay.copy()
@@ -150,7 +155,13 @@ class OverlayManager:
                 self._scene_order.append(title)
             logger.info("Image '%s' ready (scenes: %s)", title, list(self.scenes.keys()))
 
+            if self.session_store:
+                self.session_store.save_image(title, overlay)
+
             self._show_overlay(overlay, placement, "image")
+
+            if self.notify_fn:
+                self.notify_fn(f"Image '{title}' is ready and displayed.")
         except Exception as e:
             logger.error("Image generation failed: %s", e)
 
@@ -177,8 +188,8 @@ class OverlayManager:
         """Render an overlay image using client/renderer/ modules.
 
         Args:
-            content_type: "graph", "annotation", or "highlight".
-            placement: [x_min, y_min, x_max, y_max] in Gemini 0-1000 coords.
+            content_type: "graph", "annotation", "highlight", "markdown", or "image".
+            placement: [ymin, xmin, ymax, xmax] in Gemini 0-1000 coords.
             title: Title text (used as prefix for annotations).
             data: Type-specific data dict.
 
