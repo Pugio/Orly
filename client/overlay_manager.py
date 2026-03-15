@@ -5,10 +5,13 @@ In projector mode, uses H_proj to map table coordinates to projector pixels.
 In screen mode, maps Gemini's 0-1000 coordinate system directly to pixel space.
 """
 
+import logging
 import threading
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from client.renderer.graph import render_graph
 from client.renderer.annotation import render_annotation
@@ -66,12 +69,6 @@ class OverlayManager:
         title = result.get("title", "")
         data = result.get("data", {})
 
-        # TODO: Un-rotation disabled until coordinate system is sorted out
-        # if self.image_rotate != 0:
-        #     original = list(placement)
-        #     placement = self._unrotate_placement(placement)
-        #     print(f"[OverlayManager] Un-rotated {original} -> {placement}")
-
         # Enforce minimum placement size for text-heavy content types so
         # they remain readable on a low-res projector.
         if content_type in ("markdown", "annotation"):
@@ -95,7 +92,7 @@ class OverlayManager:
                                *self._placement_pixel_size(placement)),
                 placement, content_type,
             )
-            print(f"[OverlayManager] Generating image at {placement}...")
+            logger.info("Generating image at %s", placement)
             thread = threading.Thread(
                 target=self._generate_image_async,
                 args=(placement, title, data),
@@ -106,7 +103,7 @@ class OverlayManager:
 
         overlay = self.render_overlay(content_type, placement, title, data)
         self._show_overlay(overlay, placement, content_type)
-        print(f"[OverlayManager] Rendered {content_type} at {placement}")
+        logger.info("Rendered %s at %s", content_type, placement)
 
     def _show_overlay(self, overlay: np.ndarray, placement: list, content_type: str):
         """Apply projector flip and place overlay on canvas."""
@@ -134,11 +131,11 @@ class OverlayManager:
             ref_frame = None
             if reference_scene and reference_scene in self.scenes:
                 ref_frame = self.scenes[reference_scene]
-                print(f"[OverlayManager] Using scene '{reference_scene}' as reference")
+                logger.info("Using scene '%s' as reference", reference_scene)
             elif reference_previous and self._scene_order:
                 last_name = self._scene_order[-1]
                 ref_frame = self.scenes[last_name]
-                print(f"[OverlayManager] Using previous scene '{last_name}' as reference")
+                logger.info("Using previous scene '%s' as reference", last_name)
             elif include_view and self.last_clean_frame:
                 frame_bytes = np.frombuffer(self.last_clean_frame, dtype=np.uint8)
                 ref_frame = cv2.imdecode(frame_bytes, cv2.IMREAD_COLOR)
@@ -149,12 +146,11 @@ class OverlayManager:
             self.scenes[title] = overlay.copy()
             if title not in self._scene_order:
                 self._scene_order.append(title)
-            print(f"[OverlayManager] Image '{title}' ready "
-                  f"(scenes: {list(self.scenes.keys())})")
+            logger.info("Image '%s' ready (scenes: %s)", title, list(self.scenes.keys()))
 
             self._show_overlay(overlay, placement, "image")
         except Exception as e:
-            print(f"[OverlayManager] Image generation failed: {e}")
+            logger.error("Image generation failed: %s", e)
 
     def _handle_show_scene(self, result: dict):
         """Show a previously generated scene on the projector."""
@@ -162,13 +158,12 @@ class OverlayManager:
         placement = list(result.get("placement", [0, 0, 1000, 1000]))
 
         if scene_name not in self.scenes:
-            print(f"[OverlayManager] Scene '{scene_name}' not found. "
-                  f"Available: {list(self.scenes.keys())}")
+            logger.warning("Scene '%s' not found. Available: %s", scene_name, list(self.scenes.keys()))
             return
 
         overlay = self.scenes[scene_name]
         self._show_overlay(overlay, placement, "image")
-        print(f"[OverlayManager] Showing scene '{scene_name}'")
+        logger.info("Showing scene '%s'", scene_name)
 
     def render_overlay(
         self,
@@ -260,19 +255,11 @@ class OverlayManager:
             py_min = max(0, int(dst_corners[:, 1].min()))
             px_max = min(self.proj_width, int(dst_corners[:, 0].max()))
             py_max = min(self.proj_height, int(dst_corners[:, 1].max()))
-            print(f"[OverlayManager] H_proj: table [{y_min},{x_min}]->[{y_max},{x_max}] "
-                  f"=> projector x:{px_min}-{px_max}, y:{py_min}-{py_max}")
-
             if px_max > px_min and py_max > py_min:
                 w, h = px_max - px_min, py_max - py_min
-                print(f"  placing {w}x{h} at canvas[{py_min}:{py_max}, {px_min}:{px_max}] "
-                      f"(canvas is {self.proj_height}x{self.proj_width})")
                 resized = cv2.resize(overlay, (w, h))
                 self._composite(canvas, resized, py_min, py_max, px_min, px_max)
                 use_direct = False
-            else:
-                print(f"[OverlayManager] WARNING: H_proj mapped outside bounds, "
-                      f"falling back to direct mapping")
 
         if use_direct:
             px_min = max(0, int(x_min / 1000.0 * self.proj_width))
@@ -337,7 +324,7 @@ class OverlayManager:
             self._saved_canvas = self.canvas.copy()
             self.canvas = self._make_bg()
             self._refresh_requested = True
-            print("[OverlayManager] Refresh requested — overlays hidden for capture.")
+            logger.info("Refresh requested — overlays hidden for capture.")
 
     def complete_refresh(self):
         """Restore overlays after clean frame was captured."""
@@ -346,7 +333,7 @@ class OverlayManager:
                 self.canvas = self._saved_canvas
                 self._saved_canvas = None
             self._refresh_requested = False
-            print("[OverlayManager] Refresh complete — overlays restored.")
+            logger.info("Refresh complete — overlays restored.")
 
     def clear(self):
         """Clear all overlays (reset canvas to background)."""

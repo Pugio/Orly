@@ -160,7 +160,8 @@ def render_image(
         return _fallback(f"[No image in response] {prompt}", width, height)
 
     except Exception as e:
-        print(f"[ImageGen] Error: {e}")
+        import logging
+        logging.getLogger(__name__).error("Image generation error: %s", e)
         return _fallback(f"[Image gen failed] {prompt}", width, height)
 
 

@@ -51,7 +51,6 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
     go dark, captures a fresh clean frame, then restores overlays.
     """
     interval = 1.0 / fps
-    frame_count = 0
     last_clean_frame = None
     refresh_wait_frames = 0  # countdown after refresh request
     loop = asyncio.get_event_loop()
@@ -62,49 +61,41 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
             None, camera.get_rectified_frame
         )
         if not jpeg_bytes:
-            frame_count += 1
             await asyncio.sleep(interval)
             continue
-        if True:
-            # Handle refresh_view cycle.
-            if overlay_manager and overlay_manager._refresh_requested:
-                if refresh_wait_frames == 0:
-                    # First frame after request — projector just went dark,
-                    # skip this frame (may still show overlay residue).
-                    refresh_wait_frames = 1
-                elif refresh_wait_frames == 1:
-                    # Second frame — projector is dark, capture is clean.
-                    last_clean_frame = jpeg_bytes
-                    overlay_manager.last_clean_frame = jpeg_bytes
-                    await client.send_video(jpeg_bytes)
-                    overlay_manager.complete_refresh()
-                    refresh_wait_frames = 0
-                    frame_count += 1
-                    await asyncio.sleep(interval)
-                    continue
 
-            # Check if overlays are active on the canvas.
-            has_content = False
-            if overlay_manager and not overlay_manager._refresh_requested:
-                if overlay_manager.white_bg:
-                    # White bg mode: content exists if any pixel is NOT white
-                    has_content = not np.all(overlay_manager.canvas == 255)
-                else:
-                    # Black bg mode: content exists if any pixel is NOT black
-                    has_content = np.any(overlay_manager.canvas > 0)
-
-            if has_content and last_clean_frame:
-                await client.send_video(last_clean_frame)
-            else:
+        # Handle refresh_view cycle.
+        if overlay_manager and overlay_manager._refresh_requested:
+            if refresh_wait_frames == 0:
+                # First frame after request — projector just went dark,
+                # skip this frame (may still show overlay residue).
+                refresh_wait_frames = 1
+            elif refresh_wait_frames == 1:
+                # Second frame — projector is dark, capture is clean.
                 last_clean_frame = jpeg_bytes
-                if overlay_manager:
-                    overlay_manager.last_clean_frame = jpeg_bytes
-                with open("/tmp/tablelight_frame.jpg", "wb") as f:
-                    f.write(jpeg_bytes)
-                if overlay_manager:
-                    overlay_manager.last_clean_frame = jpeg_bytes
+                overlay_manager.last_clean_frame = jpeg_bytes
                 await client.send_video(jpeg_bytes)
-            frame_count += 1
+                overlay_manager.complete_refresh()
+                refresh_wait_frames = 0
+                frame_count += 1
+                await asyncio.sleep(interval)
+                continue
+
+        # Check if overlays are active on the canvas.
+        has_content = False
+        if overlay_manager and not overlay_manager._refresh_requested:
+            if overlay_manager.white_bg:
+                has_content = not np.all(overlay_manager.canvas == 255)
+            else:
+                has_content = np.any(overlay_manager.canvas > 0)
+
+        if has_content and last_clean_frame:
+            await client.send_video(last_clean_frame)
+        else:
+            last_clean_frame = jpeg_bytes
+            if overlay_manager:
+                overlay_manager.last_clean_frame = jpeg_bytes
+            await client.send_video(jpeg_bytes)
         await asyncio.sleep(interval)
 
 
@@ -166,16 +157,13 @@ async def text_input_loop(client: TableLightClient):
 async def display_loop(overlay_manager: OverlayManager, mode: str):
     """Update the projector/screen overlay display."""
     win_name = "TableLight Overlay"
-    frame_count = 0
     while True:
         canvas = overlay_manager.canvas
-        has_content = np.any(canvas > 0)
         if mode == "projector":
             show_on_projector(win_name, canvas, fullscreen=True)
         else:
             show_on_laptop(win_name, canvas)
         cv2.waitKey(1)
-        frame_count += 1
         await asyncio.sleep(0.05)  # ~20fps, yield to event loop
 
 
@@ -450,7 +438,6 @@ def run():
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
-    frame_n = 0
     try:
         while async_thread.is_alive():
             om = _shared_state.get("overlay_manager")
@@ -460,7 +447,6 @@ def run():
                     show_on_projector(win_name, canvas, fullscreen=True)
                 else:
                     show_on_laptop(win_name, canvas)
-                frame_n += 1
             cv2.waitKey(50)
     except KeyboardInterrupt:
         print("\n[TableLight] Shutting down (Ctrl+C again to force quit)...")

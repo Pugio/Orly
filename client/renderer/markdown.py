@@ -207,7 +207,8 @@ def render_markdown(
     except Exception as e:
         # If rendering fails (e.g. unsupported LaTeX), fall back to
         # plain text annotation so the client never crashes.
-        print(f"[MarkdownRenderer] Falling back to annotation: {e}")
+        import logging
+        logging.getLogger(__name__).warning("Falling back to annotation: %s", e)
         from client.renderer.annotation import render_annotation
         # Strip all markdown/LaTeX for the fallback
         plain = re.sub(r'[#*$`]', '', text)
