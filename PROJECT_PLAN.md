@@ -42,12 +42,12 @@ This is our strongest axis. Key points to make in the demo and writeup:
 > *"Does the code effectively utilize the Google GenAI SDK or ADK? Is the backend robustly hosted on Google Cloud? Is the agent logic sound? Does it handle errors gracefully? Does the agent avoid hallucinations?"*
 
 Key points:
-- Clean cloud/edge split: the agent brain (ADK Runner + Gemini Live session, tool orchestration) runs on Cloud Run; the physical I/O layer (camera, projector, audio routing) runs on a local edge client. The two communicate via WebSocket.
-- ADK handles session lifecycle, tool execution, reconnection, and state persistence — we write agent logic and tools, not infrastructure.
-- Function calling with spatial semantics: the `project_overlay` tool is a plain Python function; ADK handles dispatch automatically.
+- Clean cloud/edge split: the agent brain (raw GenAI SDK Live session, tool orchestration) runs on Cloud Run; the physical I/O layer (camera, projector, audio routing) runs on a local edge client. The two communicate via WebSocket.
+- Raw GenAI SDK with separate audio/video streams for minimal latency — no FIFO queue serialization.
+- Function calling with spatial semantics: the `project_overlay` tool is a plain Python function; schemas auto-generated from type annotations.
 - Dual homography pipeline with fiducial marker calibration — this is real computer vision, not a toy demo.
 - Grounding: the tutor only answers about content it can see on the table. The system prompt explicitly instructs it to say "I can't see that problem clearly" rather than guess.
-- Error handling: cached homographies for marker occlusion, ADK's transparent session resumption for network drops, context window compression for long study sessions.
+- Error handling: cached homographies for marker occlusion, session resumption with transparent handles for network drops, context window compression for long study sessions.
 - Infrastructure as Code: Terraform or `gcloud` deployment scripts in the repo (bonus points).
 
 **Demo & Presentation — 30% of score**
@@ -64,10 +64,10 @@ Key points:
 
 | Requirement | How We Satisfy It |
 |-------------|-------------------|
-| Must use a Gemini model | `gemini-2.5-flash-native-audio-preview-12-2025` via Live API |
-| Must use Google GenAI SDK or ADK | ADK (`google-adk`) with `Runner.run_live()` + `LiveRequestQueue` |
+| Must use a Gemini model | `gemini-2.5-flash-native-audio-latest` via Live API |
+| Must use Google GenAI SDK or ADK | `google-genai` SDK with `client.aio.live.connect()` for bidirectional streaming |
 | Must use at least one Google Cloud service | Cloud Run (agent backend) + Vertex AI Gemini API |
-| Agents hosted on Google Cloud | FastAPI + ADK Runner on Cloud Run manages the agent session |
+| Agents hosted on Google Cloud | FastAPI + raw GenAI SDK on Cloud Run manages the agent session |
 
 ### 1.5 Bonus Points Opportunities
 
@@ -381,7 +381,7 @@ async for event in runner.run_live(
 
 ### 5.1 Cloud Run Backend
 
-The agent backend is a FastAPI application deployed on Cloud Run. The ADK `Runner` manages the Gemini Live session lifecycle; FastAPI provides the WebSocket endpoint that bridges the edge client to the ADK `LiveRequestQueue` (upstream) and `run_live()` event stream (downstream).
+The agent backend is a FastAPI application deployed on Cloud Run. It uses the raw `google-genai` SDK with `client.aio.live.connect()` to establish a bidirectional Gemini Live session. Audio and video are sent as separate concurrent streams (no FIFO queue). Tool calls are handled directly in the receive loop. Session resumption and context window compression are configured natively.
 
 ```
 tablelight-backend/
@@ -393,120 +393,58 @@ tablelight-backend/
 └── deploy.sh            # gcloud run deploy script
 ```
 
-**`agent.py`:**
+**`agent.py`** — System prompt, tool schemas auto-generated from Python functions:
 
 ```python
-from google.adk.agents import Agent
-from tools import project_overlay
+from backend.tools import project_overlay, refresh_view, show_scene
 
 SYSTEM_PROMPT = """..."""  # See section 9.6
+MODEL = "gemini-2.5-flash-native-audio-latest"
 
-root_agent = Agent(
-    name="lumi_tutor",
-    model="gemini-2.5-flash-native-audio-preview-12-2025",
-    instruction=SYSTEM_PROMPT,
-    tools=[project_overlay],
-)
+# Auto-generate JSON tool schemas from Python function signatures
+TOOL_DECLARATIONS = [function_to_declaration(f) for f in [project_overlay, refresh_view, show_scene]]
+TOOL_REGISTRY = {f.__name__: f for f in [project_overlay, refresh_view, show_scene]}
 ```
 
-**`main.py` structure:**
+**`main.py`** — Raw GenAI SDK, separate audio/video streams:
 
 ```python
-import asyncio
-import base64
-from fastapi import FastAPI, WebSocket
-from google.adk.agents import LiveRequestQueue
-from google.adk.runners import Runner
-from google.adk.agents.run_config import RunConfig, StreamingMode
-from google.adk.sessions import InMemorySessionService
+from google import genai
 from google.genai import types
-from agent import root_agent
-
-app = FastAPI()
-session_service = InMemorySessionService()
-runner = Runner(agent=root_agent, app_name="tablelight", session_service=session_service)
 
 @app.websocket("/ws/session")
 async def session_endpoint(websocket: WebSocket):
     await websocket.accept()
-    live_request_queue = LiveRequestQueue()
+    client = genai.Client()
 
-    session = await session_service.create_session(
-        app_name="tablelight", user_id=str(id(websocket))
-    )
-
-    run_config = RunConfig(
-        streaming_mode=StreamingMode.BIDI,
-        response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Kore")
-            )
-        ),
-        output_audio_transcription={},
+    config = types.LiveConnectConfig(
+        response_modalities=[types.Modality.AUDIO],
+        system_instruction=SYSTEM_PROMPT,
+        tools=[{"function_declarations": TOOL_DECLARATIONS}],
+        speech_config=types.SpeechConfig(...),
+        realtime_input_config=types.RealtimeInputConfig(...),
         input_audio_transcription={},
-        context_window_compression=types.ContextWindowCompressionConfig(
-            sliding_window=types.SlidingWindow()
-        ),
+        output_audio_transcription={},
+        context_window_compression=types.ContextWindowCompressionConfig(...),
+        session_resumption=types.SessionResumptionConfig(transparent=True),
     )
 
-    async def receive_from_client():
-        """Receive audio/video/text from edge client, forward to ADK."""
-        while True:
-            msg = await websocket.receive_json()
-            if msg["type"] == "audio":
-                live_request_queue.send_realtime(
-                    types.Blob(data=base64.b64decode(msg["data"]),
-                               mime_type="audio/pcm;rate=16000")
-                )
-            elif msg["type"] == "video":
-                live_request_queue.send_realtime(
-                    types.Blob(data=base64.b64decode(msg["data"]),
-                               mime_type="image/jpeg")
-                )
-            elif msg["type"] == "text":
-                live_request_queue.send_content(
-                    types.Content(role="user",
-                                  parts=[types.Part(text=msg["text"])])
-                )
+    async with client.aio.live.connect(model=MODEL, config=config) as session:
+        async def send_from_client():
+            # Audio and video sent as SEPARATE concurrent streams
+            await session.send_realtime_input(audio=blob)   # no FIFO queue
+            await session.send_realtime_input(video=blob)   # independent stream
 
-    async def run_agent_and_send():
-        """Run ADK agent, forward events to edge client."""
-        async for event in runner.run_live(
-            session=session,
-            live_request_queue=live_request_queue,
-            run_config=run_config,
-        ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.inline_data and part.inline_data.mime_type.startswith("audio/"):
-                        await websocket.send_json({
-                            "type": "audio",
-                            "data": base64.b64encode(part.inline_data.data).decode()
-                        })
-
-            if event.server_content:
-                sc = event.server_content
-                if sc.input_transcription:
-                    await websocket.send_json({"type": "transcript_in", "text": sc.input_transcription.text})
-                if sc.output_transcription:
-                    await websocket.send_json({"type": "transcript_out", "text": sc.output_transcription.text})
-                if sc.interrupted:
-                    await websocket.send_json({"type": "interrupted"})
-
-            # Tool results (ADK executes tools automatically — forward result to edge client)
-            if event.actions and event.actions.tool_results:
-                for result in event.actions.tool_results:
-                    await websocket.send_json({
-                        "type": "tool_result",
-                        "name": result.function_name,
-                        "result": result.response,
-                    })
-
-    await asyncio.gather(receive_from_client(), run_agent_and_send())
+        async def receive_from_gemini():
+            async for msg in session.receive():
+                # Audio output, transcriptions, tool calls, interruptions
+                if msg.tool_call:
+                    for fc in msg.tool_call.function_calls:
+                        result = execute_tool(fc.name, fc.args, TOOL_REGISTRY)
+                        await session.send_tool_response(function_responses=[...])
 ```
 
-Note: ADK executes `project_overlay()` server-side automatically. The tool result is forwarded to the edge client so it can do the actual rendering and projection. In this architecture, the tool function on the server computes placement coordinates and content parameters, while the edge client handles the physical rendering.
+The tool function runs server-side. The result is forwarded to the edge client for physical rendering and projection. Session resumption handles reconnection transparently.
 
 ### 5.2 Deployment
 
@@ -559,10 +497,10 @@ Key Cloud Run settings:
 
 ### 5.3 Vertex AI vs. Google AI API
 
-ADK supports both backends:
+The `google-genai` SDK supports both backends:
 
-1. **Vertex AI** — set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` env vars. ADK authenticates via service account on Cloud Run. No API key needed. This is the production path and counts as a Google Cloud service for hackathon requirements.
-2. **Google AI API** — set `GOOGLE_API_KEY` env var. Simpler for local development.
+1. **Vertex AI** — set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` env vars. Authenticates via service account on Cloud Run. No API key needed. This is the production path and counts as a Google Cloud service for hackathon requirements.
+2. **Google AI API** — set `GOOGLE_API_KEY` env var. Simpler for local development. The backend checks for this env var first.
 
 For the hackathon, use Vertex AI on Cloud Run and Google AI API locally during development.
 
@@ -670,7 +608,7 @@ python poc1_rectify.py --url http://<PHONE_IP>:8080
 
 **Goal:** Compute a mapping from table coordinates to projector pixels.
 
-**Status: Not yet implemented.**
+**Status: Done.** Manual click-based calibration in `calibration/manual_calibrate.py`.
 
 #### Approach
 
@@ -695,7 +633,7 @@ Project a grid of bright dots, photograph each with the calibrated camera, compu
 
 **Goal:** Full geometric pipeline: detect physical object → project annotation at correct position.
 
-**Status: Not yet implemented.**
+**Status: Done.** Integrated in the full edge client.
 
 #### Approach
 
@@ -712,7 +650,7 @@ Place a coloured sticky note or extra ArUco marker on the table. Detect it in th
 
 **Goal:** Gemini accurately returns bounding boxes for content in a rectified table image.
 
-**Status: Not yet implemented.**
+**Status: Done.** Gemini places overlays via project_overlay tool with 0-1000 coordinate system.
 
 #### Approach (Jupyter notebook)
 
@@ -750,7 +688,7 @@ Parse, draw boxes on image, verify accuracy visually.
 
 **Goal:** Gemini calls `project_overlay` with correct content and placement.
 
-**Status: Not yet implemented.**
+**Status: Done.** Tool schemas auto-generated from Python functions via `function_to_declaration()`.
 
 #### Function definition
 
@@ -801,11 +739,11 @@ Rendering uses matplotlib with black backgrounds (projector transparent). Overla
 
 ---
 
-### 9.6. PoC 6 — End-to-End with ADK on Cloud Run
+### 9.6. PoC 6 — End-to-End with Raw GenAI SDK
 
 **Goal:** Full integration: student speaks → agent sees table → speaks + projects overlay.
 
-**Status: Not yet implemented.**
+**Status: Done.** Backend uses raw `google-genai` SDK with `client.aio.live.connect()`. Edge client unchanged.
 
 #### Cloud Run backend
 
@@ -1034,11 +972,15 @@ Beyond the hackathon:
 
 ---
 
-## Appendix A: Alternative Approaches Considered
+## Appendix A: Architecture Decisions
 
-### Raw GenAI SDK (without ADK)
+### Raw GenAI SDK (current approach)
 
-Direct use of `google-genai` with `client.aio.live.connect()`. Gives full control over the WebSocket session, tool dispatch, and event handling. We initially planned this approach but switched to ADK because it handles session lifecycle, tool execution, reconnection, and state persistence automatically — eliminating significant boilerplate. The raw SDK remains a fallback if ADK's abstractions prove too opinionated for our custom video pipeline. In practice, `LiveRequestQueue.send_realtime()` accepts raw `types.Blob` objects, so our homography-corrected frames pass through ADK without issue.
+We use `google-genai` with `client.aio.live.connect()` directly. This gives full control over the WebSocket session, tool dispatch, and event handling. We initially used ADK but switched to the raw SDK because **ADK's `LiveRequestQueue` serializes all input (audio, video, text) into a single FIFO queue**, causing audio to get stuck behind video frames and adding ~5 seconds of speech-to-transcription latency. The raw SDK natively supports separate `audio=`/`video=` streams, eliminating this bottleneck. Tool schemas are auto-generated from Python function signatures via `function_to_declaration()` in `backend/agent.py`, preserving ADK's convenience without the overhead.
+
+### ADK (previous approach, abandoned)
+
+ADK (`google-adk`) provided `Runner.run_live()` + `LiveRequestQueue` for session lifecycle. While convenient, the FIFO queue design was fundamentally incompatible with our real-time audio+video streaming use case. We had to monkey-patch ADK's internal `GeminiLlmConnection.send_realtime` to split audio/video, capture the raw Gemini session to bypass the queue, and intercept all tool calls in `before_tool_callback` due to flaky dispatch with the native-audio model. The workarounds added more code than the raw SDK approach would have required from scratch.
 
 ### Pipecat (by Daily)
 
