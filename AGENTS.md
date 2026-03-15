@@ -65,7 +65,7 @@ tablelight/
 ├── poc/                   ← Proof-of-concept scripts
 ├── infra/                 ← Terraform / deploy scripts
 ├── docs/                  ← Architecture diagram, demo script, blog
-└── tests/                 ← 769 tests
+└── tests/                 ← 958 tests
 ```
 
 ## Current State
@@ -73,7 +73,7 @@ tablelight/
 - End-to-end system: **working** — camera → backend → projector overlay
 - ADK → raw GenAI SDK migration: **done** — separate audio/video streams, no FIFO
 - Simulation harness: **done** — `uv run python -m simulation.latency_benchmark`
-- Test coverage: **769 tests** passing
+- Test coverage: **958 tests** passing
 - Manual projector calibration: **done**
 - Image generation (Gemini): **done** — with enhance mode for user drawings
 - Markdown/annotation rendering: **done**
@@ -82,3 +82,10 @@ tablelight/
 - Named overlay state: **done** — CRUD, JSON export, ASCII grid visualization
 - Session storage: **done** — images + programs persisted to `session/`
 - Async notification channel: **done** — bi-directional text for task completion
+- Renderer registry: **done** — auto-discovery, one-file renderer additions
+- Projector perspective warp: **done** — proper warpPerspective, axis order fix
+- Error recovery UX: **done** — grace periods, priority messages, error overlays
+- Multi-subject support: **done** — math, science, language, history
+- Session persistence: **done** — save/restore overlays, debounced auto-save
+- Flashcard renderer: **done** — front/back with flip tool
+- Perf: **done** — JPEG round-trip eliminated, tracker offloaded to thread pool
