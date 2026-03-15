@@ -23,9 +23,15 @@ class TableLightClient:
         self._on_transcript = None   # async def(direction, text)
         self._on_interrupted = None  # async def()
 
-    async def connect(self):
-        """Connect to backend WebSocket."""
+    async def connect(self, text_only: bool = False):
+        """Connect to backend WebSocket.
+
+        Args:
+            text_only: If True, request text-only mode (no audio I/O).
+        """
         self.ws = await websockets.connect(self.backend_url)
+        # Send init message to configure session mode.
+        await self.ws.send(json.dumps({"text_only": text_only}))
 
     async def send_audio(self, pcm_bytes: bytes):
         """Send audio chunk to backend."""
@@ -60,16 +66,21 @@ class TableLightClient:
 
     async def receive_loop(self):
         """Receive and dispatch messages from backend."""
-        async for raw in self.ws:
-            msg = json.loads(raw)
-            msg_type = msg.get("type")
+        try:
+            async for raw in self.ws:
+                msg = json.loads(raw)
+                msg_type = msg.get("type")
 
-            if msg_type == "audio" and self._on_audio:
-                await self._on_audio(base64.b64decode(msg["data"]))
-            elif msg_type == "tool_result" and self._on_tool_result:
-                await self._on_tool_result(msg["name"], msg["result"])
-            elif msg_type in ("transcript_in", "transcript_out") and self._on_transcript:
-                direction = "in" if msg_type == "transcript_in" else "out"
-                await self._on_transcript(direction, msg["text"])
-            elif msg_type == "interrupted" and self._on_interrupted:
-                await self._on_interrupted()
+                if msg_type == "audio" and self._on_audio:
+                    await self._on_audio(base64.b64decode(msg["data"]))
+                elif msg_type == "tool_result" and self._on_tool_result:
+                    await self._on_tool_result(msg["name"], msg["result"])
+                elif msg_type in ("transcript_in", "transcript_out") and self._on_transcript:
+                    direction = "in" if msg_type == "transcript_in" else "out"
+                    await self._on_transcript(direction, msg["text"])
+                elif msg_type == "interrupted" and self._on_interrupted:
+                    await self._on_interrupted()
+        except websockets.exceptions.ConnectionClosed:
+            print("[TableLight] Backend connection closed.")
+        except Exception as e:
+            print(f"[TableLight] Receive error: {e}")

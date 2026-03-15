@@ -49,6 +49,15 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
         await asyncio.sleep(interval)
 
 
+async def silence_loop(client: TableLightClient):
+    """Send silence chunks to keep the audio stream alive (for --no-audio mode)."""
+    # 100ms of silence at 16kHz, 16-bit mono = 3200 bytes
+    silence = b"\x00" * 3200
+    while True:
+        await client.send_audio(silence)
+        await asyncio.sleep(0.1)
+
+
 async def audio_send_loop(audio_capture: AudioCapture, client: TableLightClient):
     """Send audio chunks to backend continuously."""
     while True:
@@ -59,9 +68,44 @@ async def audio_send_loop(audio_capture: AudioCapture, client: TableLightClient)
             await asyncio.sleep(0.01)  # avoid busy-wait
 
 
-async def display_loop(overlay_manager: OverlayManager, mode: str, fps: float = 30.0):
+async def text_input_loop(client: TableLightClient):
+    """Read text from stdin and send to backend (for --no-audio testing)."""
+    import threading
+    import queue as queue_mod
+
+    input_queue: queue_mod.Queue[str | None] = queue_mod.Queue()
+
+    def _reader():
+        try:
+            while True:
+                line = sys.stdin.readline()
+                if not line:  # EOF
+                    input_queue.put(None)
+                    return
+                input_queue.put(line.strip())
+        except Exception:
+            input_queue.put(None)
+
+    thread = threading.Thread(target=_reader, daemon=True)
+    thread.start()
+
+    print("[TableLight] Type a message and press Enter to send to Lumi.")
+    while True:
+        # Poll the queue so asyncio cancellation works
+        try:
+            line = input_queue.get_nowait()
+        except queue_mod.Empty:
+            await asyncio.sleep(0.1)
+            continue
+        if line is None:
+            break
+        if line:
+            await client.send_text(line)
+            print(f"[You] {line}")
+
+
+async def display_loop(overlay_manager: OverlayManager, mode: str):
     """Update the projector/screen overlay display."""
-    interval = 1.0 / fps
     win_name = "TableLight Overlay"
     while True:
         canvas = overlay_manager.canvas
@@ -69,8 +113,11 @@ async def display_loop(overlay_manager: OverlayManager, mode: str, fps: float = 
             show_on_projector(win_name, canvas, fullscreen=True)
         else:
             show_on_laptop(win_name, canvas)
-        cv2.waitKey(1)
-        await asyncio.sleep(interval)
+        # cv2.waitKey processes the event loop; use a short wait
+        key = cv2.waitKey(100)  # 100ms — balances responsiveness and CPU
+        if key == ord("q"):
+            break
+        await asyncio.sleep(0)  # yield to event loop
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +234,12 @@ async def main(argv: list[str] | None = None):
         print(f"[TableLight] Overlay projected: {content_type} — {title}")
 
     async def on_transcript(direction: str, text: str):
+        if not text or not text.strip():
+            return
+        # Skip Gemini's internal thinking blocks (markdown bold headers)
+        stripped = text.strip()
+        if stripped.startswith("**") and stripped.endswith("**"):
+            return
         if direction == "in":
             print(f"[Student] {text}")
         else:
@@ -203,8 +256,8 @@ async def main(argv: list[str] | None = None):
 
     # --- Connect ---
     print(f"[TableLight] Connecting to backend at {args.backend} ...")
-    await client.connect()
-    print("[TableLight] Connected.")
+    await client.connect(text_only=args.no_audio)
+    print(f"[TableLight] Connected ({'text-only' if args.no_audio else 'audio'} mode).")
 
     # --- Build task list ---
     tasks = [
@@ -220,6 +273,15 @@ async def main(argv: list[str] | None = None):
             asyncio.create_task(
                 audio_send_loop(audio_capture, client), name="audio_send"
             )
+        )
+    else:
+        # In no-audio mode, send silence to keep the audio stream alive
+        # and allow text input from terminal.
+        tasks.append(
+            asyncio.create_task(silence_loop(client), name="silence")
+        )
+        tasks.append(
+            asyncio.create_task(text_input_loop(client), name="text_input")
         )
 
     # --- Handle graceful shutdown ---

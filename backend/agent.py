@@ -27,9 +27,11 @@ GROUNDING:
 - If asked about something not visible, ask the student to point to it or place it on the table.
 - Do not guess or hallucinate problem content."""
 
+MODEL = "gemini-2.5-flash-native-audio-latest"
+
 root_agent = Agent(
     name="lumi_tutor",
-    model="gemini-2.5-flash-native-audio-latest",
+    model=MODEL,
     instruction=SYSTEM_PROMPT,
     tools=[project_overlay],
 )

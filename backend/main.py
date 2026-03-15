@@ -101,6 +101,10 @@ async def session_endpoint(websocket: WebSocket) -> None:
 
     await websocket.accept()
 
+    # Read init message from client.
+    init_msg = await websocket.receive_json()
+    text_only = init_msg.get("text_only", False)
+
     # Per-connection ADK plumbing.
     session_service = InMemorySessionService()
     runner = Runner(
@@ -114,16 +118,24 @@ async def session_endpoint(websocket: WebSocket) -> None:
         app_name="tablelight", user_id=str(id(websocket))
     )
 
+    # Always use AUDIO modality — the native-audio model requires it.
+    # In --no-audio mode, the client sends silence to keep the stream alive
+    # and uses send_content() for text input.
     run_config = RunConfig(
         streaming_mode=StreamingMode.BIDI,
-        response_modalities=["AUDIO"],
+        response_modalities=[types.Modality.AUDIO],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Kore")
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name="Kore"
+                )
             )
         ),
         output_audio_transcription={},
         input_audio_transcription={},
+    )
+    logger.info(
+        "Session started (text_only=%s)", text_only
     )
 
     async def receive_from_client() -> None:
@@ -166,39 +178,69 @@ async def session_endpoint(websocket: WebSocket) -> None:
                 live_request_queue=live_request_queue,
                 run_config=run_config,
             ):
-                # Audio data in content parts.
+                # Debug: log event summary
+                parts_summary = []
+                if event.content and event.content.parts:
+                    for p in event.content.parts:
+                        if p.inline_data:
+                            parts_summary.append(f"inline_data({p.inline_data.mime_type})")
+                        if p.text:
+                            parts_summary.append(f"text({p.text[:50]})")
+                        if p.function_call:
+                            parts_summary.append(f"function_call({p.function_call.name})")
+                        if p.function_response:
+                            parts_summary.append(f"function_response({p.function_response.name})")
+                if parts_summary:
+                    logger.info("Event parts: %s", ", ".join(parts_summary))
+                if event.input_transcription:
+                    logger.info("Input transcription: %s", event.input_transcription.text)
+                if event.output_transcription:
+                    logger.info("Output transcription: %s", event.output_transcription.text)
+
+                # Process content parts: audio, function calls/responses.
                 if event.content and event.content.parts:
                     for part in event.content.parts:
+                        # Audio response → forward to edge client.
                         if (
                             part.inline_data
+                            and part.inline_data.mime_type
                             and part.inline_data.mime_type.startswith("audio/")
                         ):
                             await websocket.send_json(
                                 format_audio_response(part.inline_data.data)
                             )
 
-                # Transcriptions & interruptions.
-                if event.server_content:
-                    sc = event.server_content
-                    if sc.input_transcription:
-                        await websocket.send_json(
-                            format_transcript("in", sc.input_transcription.text)
-                        )
-                    if sc.output_transcription:
-                        await websocket.send_json(
-                            format_transcript("out", sc.output_transcription.text)
-                        )
-                    if sc.interrupted:
-                        await websocket.send_json(format_interrupted())
-
-                # Tool results — forward to edge client for rendering.
-                if event.actions and event.actions.tool_results:
-                    for result in event.actions.tool_results:
-                        await websocket.send_json(
-                            format_tool_result(
-                                result.function_name, result.response
+                        # Text response (text-only mode).
+                        if part.text:
+                            await websocket.send_json(
+                                format_transcript("out", part.text)
                             )
-                        )
+
+                        # Function call → ADK executes automatically,
+                        # but we forward the call info to the edge client
+                        # so it can render the overlay.
+                        if part.function_call:
+                            fc = part.function_call
+                            await websocket.send_json(
+                                format_tool_result(
+                                    fc.name,
+                                    dict(fc.args) if fc.args else {},
+                                )
+                            )
+
+                # Transcriptions (flat fields on Event).
+                if event.input_transcription:
+                    await websocket.send_json(
+                        format_transcript("in", event.input_transcription.text)
+                    )
+                if event.output_transcription:
+                    await websocket.send_json(
+                        format_transcript("out", event.output_transcription.text)
+                    )
+
+                # Interruption (flat field on Event).
+                if event.interrupted:
+                    await websocket.send_json(format_interrupted())
         except WebSocketDisconnect:
             pass
         except Exception:
