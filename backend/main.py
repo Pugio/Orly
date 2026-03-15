@@ -1,10 +1,12 @@
-"""FastAPI WebSocket server bridging edge client to ADK Runner + Gemini Live."""
+"""FastAPI WebSocket server bridging edge client to Gemini Live API (raw SDK)."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import logging
+import os
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -15,7 +17,7 @@ app = FastAPI(title="TableLight Backend")
 
 
 # ---------------------------------------------------------------------------
-# Pure message helpers (testable without ADK)
+# Pure message helpers (testable without Gemini SDK)
 # ---------------------------------------------------------------------------
 
 _BINARY_TYPES = {"audio", "video"}
@@ -83,79 +85,86 @@ def format_interrupted() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# WebSocket endpoint
+# Tool execution helper
+# ---------------------------------------------------------------------------
+
+
+def _clean_args(args: dict, func) -> dict:
+    """Strip unexpected kwargs that Gemini sometimes sends (training artifacts)."""
+    valid = set(inspect.signature(func).parameters.keys())
+    return {k: v for k, v in args.items() if k in valid}
+
+
+def execute_tool(function_name: str, args: dict, registry: dict) -> dict:
+    """Look up and execute a tool function, returning its result dict.
+
+    Strips unexpected kwargs before calling. Returns an error dict if the
+    function is not found or raises an exception.
+    """
+    func = registry.get(function_name)
+    if func is None:
+        return {"status": "error", "message": f"Unknown tool: {function_name}"}
+    try:
+        clean = _clean_args(args, func)
+        return func(**clean)
+    except Exception as e:
+        logger.exception("Tool %s raised an exception", function_name)
+        return {"status": "error", "message": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint — raw google-genai Live API
 # ---------------------------------------------------------------------------
 
 
 @app.websocket("/ws/session")
 async def session_endpoint(websocket: WebSocket) -> None:
-    """Bridge an edge client to an ADK Gemini Live session."""
-    # Lazy-import ADK so tests that only exercise the pure helpers above
-    # never need ADK credentials or heavy dependencies at import time.
-    from google.adk.agents import LiveRequestQueue  # type: ignore[import-untyped]
-    from google.adk.agents.run_config import RunConfig, StreamingMode  # type: ignore[import-untyped]
-    from google.adk.runners import Runner  # type: ignore[import-untyped]
-    from google.adk.sessions import InMemorySessionService  # type: ignore[import-untyped]
-    from google.genai import types  # type: ignore[import-untyped]
+    """Bridge an edge client to a Gemini Live session (raw SDK)."""
+    # Lazy imports so pure-helper tests never need credentials.
+    from google import genai
+    from google.genai import types
 
-    from backend.agent import root_agent
-
-    # --- Monkey-patch ADK to use separate audio=/video= streams ---
-    # ADK sends everything via media= (deprecated mediaChunks), which
-    # serializes audio and video into a single FIFO stream.  The Gemini
-    # API processes audio= and video= as concurrent independent streams,
-    # so routing them separately eliminates audio-behind-video latency.
-    from google.adk.models import gemini_llm_connection as _glc  # type: ignore
-
-    _original_send_realtime = _glc.GeminiLlmConnection.send_realtime
-
-    async def _patched_send_realtime(self, input):
-        if isinstance(input, types.Blob):
-            mime = getattr(input, "mime_type", "") or ""
-            if mime.startswith("audio/"):
-                await self._gemini_session.send_realtime_input(audio=input)
-            elif mime.startswith("image/"):
-                await self._gemini_session.send_realtime_input(video=input)
-            else:
-                await self._gemini_session.send_realtime_input(media=input)
-        elif isinstance(input, types.ActivityStart):
-            await self._gemini_session.send_realtime_input(activity_start=input)
-        elif isinstance(input, types.ActivityEnd):
-            await self._gemini_session.send_realtime_input(activity_end=input)
-        else:
-            raise ValueError(f"Unsupported input type: {type(input)}")
-
-    _glc.GeminiLlmConnection.send_realtime = _patched_send_realtime
-    logger.info("Patched ADK to use separate audio/video streams")
-
-    # Verify the patch took effect
-    assert _glc.GeminiLlmConnection.send_realtime is _patched_send_realtime
+    from backend.agent import (
+        MODEL,
+        SYSTEM_PROMPT,
+        TOOL_DECLARATIONS,
+        TOOL_REGISTRY,
+    )
 
     await websocket.accept()
 
     # Read init message from client.
     init_msg = await websocket.receive_json()
     text_only = init_msg.get("text_only", False)
+    logger.info("Session started (text_only=%s)", text_only)
 
-    # Per-connection ADK plumbing.
-    session_service = InMemorySessionService()
-    runner = Runner(
-        agent=root_agent,
-        app_name="tablelight",
-        session_service=session_service,
+    # Build Gemini client.
+    api_key = (
+        os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
     )
-    live_request_queue = LiveRequestQueue()
+    if not api_key:
+        # Fallback: try `llm keys get gemini` (simon willison's llm tool).
+        import subprocess
+        try:
+            api_key = subprocess.check_output(
+                ["llm", "keys", "get", "gemini"], text=True
+            ).strip()
+        except Exception:
+            pass
+    # Detect whether we're using Vertex AI or Google AI API key.
+    is_vertex = not bool(api_key)
+    if api_key:
+        client = genai.Client(api_key=api_key)
+    else:
+        # Vertex AI via Application Default Credentials
+        client = genai.Client()
 
-    session = await session_service.create_session(
-        app_name="tablelight", user_id=str(id(websocket))
-    )
-
-    # Always use AUDIO modality — the native-audio model requires it.
-    # In --no-audio mode, the client sends silence to keep the stream alive
-    # and uses send_content() for text input.
-    run_config = RunConfig(
-        streaming_mode=StreamingMode.BIDI,
+    # Build config — some features are Vertex AI only.
+    config_kwargs = dict(
         response_modalities=[types.Modality.AUDIO],
+        system_instruction=SYSTEM_PROMPT,
+        tools=[{"function_declarations": TOOL_DECLARATIONS}],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -172,265 +181,302 @@ async def session_endpoint(websocket: WebSocket) -> None:
                 silence_duration_ms=1000,
             )
         ),
-        output_audio_transcription={},
         input_audio_transcription={},
+        output_audio_transcription={},
     )
-    logger.info(
-        "Session started (text_only=%s)", text_only
-    )
+    # Session resumption and context compression are Vertex AI only.
+    if is_vertex:
+        config_kwargs["context_window_compression"] = (
+            types.ContextWindowCompressionConfig(
+                trigger_tokens=20000,
+                sliding_window=types.SlidingWindow(target_tokens=10000),
+            )
+        )
+        config_kwargs["session_resumption"] = (
+            types.SessionResumptionConfig(transparent=True)
+        )
+    config = types.LiveConnectConfig(**config_kwargs)
 
-    # Mutable container so receive_from_client always sees the current queue.
-    # gemini_session is populated once run_live establishes the connection,
-    # allowing audio to bypass ADK's FIFO queue and go directly to Gemini.
-    # audio_queue is a dedicated high-priority queue drained by a separate
-    # task so audio sends are serialized but never blocked by video.
-    audio_queue: asyncio.Queue = asyncio.Queue()
+    # Shared mutable state across tasks.
+    client_done = asyncio.Event()
+    # Handle for session resumption after crash/go_away.
+    resumption_handle: dict[str, str | None] = {"handle": None}
 
-    state = {
-        "live_request_queue": live_request_queue,
-        "gemini_session": None,  # set by monkey-patch
-    }
+    async def _run_session() -> None:
+        """Connect to Gemini and run the send/receive loops.
 
-    # Capture the session from send_realtime calls
-    _prev_patched = _glc.GeminiLlmConnection.send_realtime
-
-    async def _capturing_send_realtime(self_conn, input):
-        if state["gemini_session"] is None and hasattr(self_conn, '_gemini_session'):
-            state["gemini_session"] = self_conn._gemini_session
-            logger.info("Captured Gemini session for direct audio bypass")
-        return await _prev_patched(self_conn, input)
-
-    _glc.GeminiLlmConnection.send_realtime = _capturing_send_realtime
-
-    async def _audio_sender():
-        """Dedicated task: drain audio_queue and send directly to Gemini."""
-        count = 0
-        while True:
-            blob = await audio_queue.get()
-            count += 1
-            gs = state.get("gemini_session")
-            if gs:
-                try:
-                    await gs.send_realtime_input(audio=blob)
-                    if count % 40 == 0:
-                        import time
-                        qsize = audio_queue.qsize()
-                        logger.info("Audio sent #%d (queue=%d, t=%.1f)",
-                                    count, qsize, time.time() % 1000)
-                except Exception as e:
-                    logger.warning("Audio send failed: %s", e)
-            else:
-                state["live_request_queue"].send_realtime(blob)
-
-    async def receive_from_client() -> None:
-        """Receive audio/video/text from edge client, forward to ADK.
-
-        Audio is sent directly to the Gemini session (bypassing ADK's
-        FIFO queue) for lowest latency. Video and text go through the
-        queue as before.
+        Returns normally on clean close or go_away. Raises on crash.
         """
-        try:
-            while True:
-                raw = await websocket.receive_json()
-                msg_type, payload = parse_client_message(raw)
-                lrq = state["live_request_queue"]
+        resume_cfg = config
+        if is_vertex and resumption_handle["handle"]:
+            # Clone config with session resumption handle for continuation.
+            resume_cfg = types.LiveConnectConfig(
+                response_modalities=config.response_modalities,
+                system_instruction=config.system_instruction,
+                tools=config.tools,
+                speech_config=config.speech_config,
+                realtime_input_config=config.realtime_input_config,
+                input_audio_transcription=config.input_audio_transcription,
+                output_audio_transcription=config.output_audio_transcription,
+                context_window_compression=config.context_window_compression,
+                session_resumption=types.SessionResumptionConfig(
+                    transparent=True,
+                    handle=resumption_handle["handle"],
+                ),
+            )
 
+        async with client.aio.live.connect(
+            model=MODEL, config=resume_cfg
+        ) as session:
+
+            # --- Sender: read from WebSocket, forward to Gemini ---
+            async def send_from_client() -> None:
+                """Read from WebSocket, forward audio/video/text to Gemini.
+
+                Audio and video are sent via send_realtime_input with separate
+                audio= and video= kwargs, so they travel as independent
+                concurrent streams — no FIFO serialization.
+                """
                 try:
-                    if msg_type == "audio":
-                        blob = types.Blob(
-                            data=payload, mime_type="audio/pcm;rate=16000"
-                        )
-                        # Route to dedicated audio queue (bypasses ADK's
-                        # FIFO queue, sent by _audio_sender task).
-                        audio_queue.put_nowait(blob)
-                    elif msg_type == "video":
-                        lrq.send_realtime(
-                            types.Blob(data=payload, mime_type="image/jpeg")
-                        )
-                    elif msg_type == "text":
-                        lrq.send_content(
-                            types.Content(
-                                role="user", parts=[types.Part(text=payload)]
+                    while not client_done.is_set():
+                        try:
+                            raw = await asyncio.wait_for(
+                                websocket.receive_json(), timeout=0.5
                             )
-                        )
-                    elif msg_type == "close":
-                        lrq.close()
-                        break
+                        except asyncio.TimeoutError:
+                            continue
+                        except WebSocketDisconnect:
+                            client_done.set()
+                            return
+
+                        msg_type, payload = parse_client_message(raw)
+
+                        if msg_type == "audio":
+                            blob = types.Blob(
+                                data=payload, mime_type="audio/pcm;rate=16000"
+                            )
+                            await session.send_realtime_input(audio=blob)
+                        elif msg_type == "video":
+                            blob = types.Blob(
+                                data=payload, mime_type="image/jpeg"
+                            )
+                            await session.send_realtime_input(video=blob)
+                        elif msg_type == "text":
+                            await session.send_client_content(
+                                turns=types.Content(
+                                    role="user",
+                                    parts=[types.Part(text=payload)],
+                                ),
+                                turn_complete=True,
+                            )
+                        elif msg_type == "close":
+                            client_done.set()
+                            return
+                except WebSocketDisconnect:
+                    client_done.set()
                 except Exception:
-                    # Queue may be closed during reconnection — drop the
-                    # message and keep reading from the client.
-                    pass
-        except WebSocketDisconnect:
-            state["live_request_queue"].close()
-        except Exception:
-            logger.exception("Error in receive_from_client")
-            state["live_request_queue"].close()
+                    logger.exception("Error in send_from_client")
+                    client_done.set()
 
-    async def _drain_pending_tool_calls() -> None:
-        """Forward any tool calls stashed by _before_tool to the client.
-
-        _before_tool runs synchronously inside ADK before the event is
-        yielded.  If the Live API crashes right after (1011), the event
-        with part.function_call never reaches _process_events.  This
-        drainer ensures the client always gets the tool call.
-        """
-        import queue as _q
-        from backend.agent import pending_tool_calls
-        while True:
-            try:
-                name, args = pending_tool_calls.get_nowait()
-                await websocket.send_json(format_tool_result(name, args))
-                logger.info("Forwarded pending tool call: %s", name)
-            except _q.Empty:
-                break
-
-    async def _process_events(lrq: LiveRequestQueue) -> None:
-        """Process events from a single run_live session."""
-        event_count = 0
-        # Track conversation phase to filter consolidated transcript replays.
-        # The Live API sends word-by-word transcripts during speech, then
-        # replays the full transcript as a single event after the turn ends.
-        # Phase: "listening" → "responding" → "listening" ...
-        phase = "listening"
-        sent_out_text = ""  # cumulative output text for dedup
-
-        async for event in runner.run_live(
-            session=session,
-            live_request_queue=lrq,
-            run_config=run_config,
-        ):
-            event_count += 1
-
-            # Drain any tool calls that _before_tool stashed.
-            await _drain_pending_tool_calls()
-
-            # Process content parts: audio, function calls/responses.
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if (
-                        part.inline_data
-                        and part.inline_data.mime_type
-                        and part.inline_data.mime_type.startswith("audio/")
-                    ):
-                        await websocket.send_json(
-                            format_audio_response(part.inline_data.data)
-                        )
-
-            # Transcriptions — use phase tracking to skip consolidated
-            # replays. The Live API sends:
-            #   1. Word-by-word input transcripts while user speaks
-            #   2. Word-by-word output transcripts while model speaks
-            #   3. A consolidated replay of both after the turn ends
-            # We forward (1) and (2), skip (3).
-            if event.input_transcription:
-                t = event.input_transcription.text or ""
-                if t.strip() and "<ctrl" not in t:
-                    if phase == "responding":
-                        # Input transcript during model response =
-                        # consolidated replay. Skip.
-                        pass
-                    else:
-                        phase = "listening"
-                        sent_out_text = ""  # new turn, reset output dedup
-                        await websocket.send_json(
-                            format_transcript("in", t)
-                        )
-            if event.output_transcription:
-                t = event.output_transcription.text or ""
-                if t.strip() and "<ctrl" not in t:
-                    # Skip if this text is already in what we've sent
-                    # (= consolidated replay of the response).
-                    if t.strip() in sent_out_text:
-                        pass
-                    else:
-                        if phase == "listening":
-                            phase = "responding"
-                        sent_out_text += t
-                        await websocket.send_json(
-                            format_transcript("out", t)
-                        )
-
-            # Interruption — reset phase so next input is treated as new.
-            if event.interrupted:
+            # --- Receiver: process events from Gemini ---
+            async def receive_from_gemini() -> None:
+                """Receive events from Gemini, forward to edge client."""
+                # Phase tracking for transcript dedup.
                 phase = "listening"
                 sent_out_text = ""
-                logger.info("Event #%d: INTERRUPTED", event_count)
-                await websocket.send_json(format_interrupted())
 
-    # Event set when receive_from_client exits (client disconnected).
-    client_done = asyncio.Event()
+                try:
+                    async for msg in session.receive():
+                        if client_done.is_set():
+                            return
 
-    async def send_to_client() -> None:
-        """Run ADK agent with auto-reconnect on Live API crashes.
+                        # --- Session resumption updates ---
+                        if (
+                            hasattr(msg, "session_resumption_update")
+                            and msg.session_resumption_update
+                        ):
+                            update = msg.session_resumption_update
+                            if hasattr(update, "new_handle") and update.new_handle:
+                                resumption_handle["handle"] = update.new_handle
+                                logger.info("Updated session resumption handle")
 
-        The native-audio model's Live API is flaky after tool execution —
-        it often drops the WebSocket with 1011.  We catch that, create a
-        fresh LiveRequestQueue, and restart run_live so the client keeps
-        working transparently.
+                        # --- go_away: server wants us to reconnect ---
+                        if hasattr(msg, "go_away") and msg.go_away:
+                            logger.info("Received go_away — will reconnect")
+                            return
 
-        This function stays alive as long as the client is connected,
-        even if the Gemini session crashes repeatedly.
-        """
-        max_retries = 10
-        for attempt in range(1, max_retries + 1):
-            if client_done.is_set():
-                return
+                        # --- Tool calls ---
+                        if hasattr(msg, "tool_call") and msg.tool_call:
+                            responses = []
+                            for fc in msg.tool_call.function_calls:
+                                fn_name = fc.name
+                                fn_args = dict(fc.args) if fc.args else {}
+                                logger.info(
+                                    "Tool call: %s(%s)", fn_name, fn_args
+                                )
+                                result = execute_tool(
+                                    fn_name, fn_args, TOOL_REGISTRY
+                                )
+                                # Forward to edge client for rendering.
+                                try:
+                                    await websocket.send_json(
+                                        format_tool_result(fn_name, result)
+                                    )
+                                except Exception:
+                                    pass
+                                responses.append(
+                                    types.FunctionResponse(
+                                        name=fn_name,
+                                        response=result,
+                                        id=fc.id,
+                                    )
+                                )
+                            # Send tool responses back to Gemini.
+                            await session.send_tool_response(
+                                function_responses=responses
+                            )
+                            continue
+
+                        # --- Server content (audio, transcriptions, interruptions) ---
+                        sc = getattr(msg, "server_content", None)
+                        if sc is None:
+                            continue
+
+                        # Interruption
+                        if sc.interrupted:
+                            phase = "listening"
+                            sent_out_text = ""
+                            logger.info("INTERRUPTED")
+                            try:
+                                await websocket.send_json(format_interrupted())
+                            except Exception:
+                                pass
+                            continue
+
+                        # Audio and text parts
+                        if sc.model_turn and sc.model_turn.parts:
+                            for part in sc.model_turn.parts:
+                                if (
+                                    part.inline_data
+                                    and part.inline_data.mime_type
+                                    and part.inline_data.mime_type.startswith(
+                                        "audio/"
+                                    )
+                                ):
+                                    try:
+                                        await websocket.send_json(
+                                            format_audio_response(
+                                                part.inline_data.data
+                                            )
+                                        )
+                                    except Exception:
+                                        pass
+
+                        # Input transcription
+                        it = getattr(sc, "input_transcription", None)
+                        if it:
+                            t = getattr(it, "text", "") or ""
+                            if t.strip() and "<ctrl" not in t:
+                                if phase == "responding":
+                                    pass  # consolidated replay, skip
+                                else:
+                                    phase = "listening"
+                                    sent_out_text = ""
+                                    try:
+                                        await websocket.send_json(
+                                            format_transcript("in", t)
+                                        )
+                                    except Exception:
+                                        pass
+
+                        # Output transcription
+                        ot = getattr(sc, "output_transcription", None)
+                        if ot:
+                            t = getattr(ot, "text", "") or ""
+                            if t.strip() and "<ctrl" not in t:
+                                if t.strip() in sent_out_text:
+                                    pass  # consolidated replay, skip
+                                else:
+                                    if phase == "listening":
+                                        phase = "responding"
+                                    sent_out_text += t
+                                    try:
+                                        await websocket.send_json(
+                                            format_transcript("out", t)
+                                        )
+                                    except Exception:
+                                        pass
+
+                except WebSocketDisconnect:
+                    client_done.set()
+
+            # Run sender and receiver concurrently.
+            sender = asyncio.create_task(send_from_client())
+            receiver = asyncio.create_task(receive_from_gemini())
             try:
-                await _process_events(state["live_request_queue"])
-                return  # clean exit
-            except WebSocketDisconnect:
-                return
-            except Exception:
-                # Drain any tool calls stashed before the crash.
-                await _drain_pending_tool_calls()
-                logger.exception(
-                    "Live session crashed (attempt %d/%d) — reconnecting",
-                    attempt, max_retries,
+                done, pending = await asyncio.wait(
+                    {sender, receiver}, return_when=asyncio.FIRST_COMPLETED
                 )
-                if client_done.is_set():
-                    return
-                if attempt < max_retries:
-                    new_lrq = LiveRequestQueue()
-                    state["live_request_queue"] = new_lrq
+                for task in pending:
+                    task.cancel()
                     try:
-                        await websocket.send_json(
-                            format_transcript(
-                                "out",
-                                "(Reconnecting to Gemini...)",
-                            )
-                        )
-                    except Exception:
-                        return  # client gone
-                    await asyncio.sleep(1)
-                else:
-                    logger.error("Max retries reached — giving up")
-                    try:
-                        await websocket.send_json(
-                            format_transcript(
-                                "out",
-                                "(Session lost — please restart the client)",
-                            )
-                        )
-                    except Exception:
+                        await task
+                    except asyncio.CancelledError:
                         pass
+                # Re-raise exceptions from completed tasks.
+                for task in done:
+                    exc = task.exception()
+                    if exc and not isinstance(exc, asyncio.CancelledError):
+                        raise exc
+            except WebSocketDisconnect:
+                client_done.set()
 
-    recv_task = asyncio.create_task(receive_from_client())
-    send_task = asyncio.create_task(send_to_client())
-    audio_task = asyncio.create_task(_audio_sender())
-
-    # Wait for the client to disconnect (receive_from_client exits).
-    # send_to_client may exit/restart independently.
-    try:
-        await recv_task
-    finally:
-        client_done.set()
-        send_task.cancel()
-        audio_task.cancel()
+    # --- Main loop with auto-reconnect ---
+    max_retries = 10
+    for attempt in range(1, max_retries + 1):
+        if client_done.is_set():
+            break
         try:
-            await send_task
-        except asyncio.CancelledError:
-            pass
-        try:
-            await audio_task
-        except asyncio.CancelledError:
-            pass
+            await _run_session()
+            if client_done.is_set():
+                break
+            # Clean exit from _run_session (e.g. go_away) — reconnect.
+            logger.info(
+                "Session ended cleanly (attempt %d) — reconnecting", attempt
+            )
+            try:
+                await websocket.send_json(
+                    format_transcript("out", "(Reconnecting to Gemini...)")
+                )
+            except Exception:
+                break
+            await asyncio.sleep(0.5)
+        except WebSocketDisconnect:
+            break
+        except Exception:
+            logger.exception(
+                "Live session crashed (attempt %d/%d) — reconnecting",
+                attempt,
+                max_retries,
+            )
+            if client_done.is_set():
+                break
+            if attempt < max_retries:
+                try:
+                    await websocket.send_json(
+                        format_transcript("out", "(Reconnecting to Gemini...)")
+                    )
+                except Exception:
+                    break
+                await asyncio.sleep(1)
+            else:
+                logger.error("Max retries reached — giving up")
+                try:
+                    await websocket.send_json(
+                        format_transcript(
+                            "out",
+                            "(Session lost — please restart the client)",
+                        )
+                    )
+                except Exception:
+                    pass

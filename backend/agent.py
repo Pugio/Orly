@@ -1,15 +1,19 @@
-"""ADK Agent definition for the Lumi maths tutor."""
+"""Agent configuration for the Lumi maths tutor — raw google-genai SDK version.
 
-import queue
+Exports:
+    SYSTEM_PROMPT — system instruction for the model
+    MODEL — model name string
+    TOOL_DECLARATIONS — list of FunctionDeclaration dicts for LiveConnectConfig
+    TOOL_REGISTRY — {name: callable} mapping for executing tool calls
+"""
 
-from google.adk.agents import Agent
+from __future__ import annotations
+
+import inspect
+import re
+from typing import Any, Callable, get_type_hints
 
 from backend.tools import project_overlay, refresh_view, show_scene
-
-# Queue where _before_tool stashes tool call args so the backend can
-# forward them to the client even if the Live API crashes immediately
-# after.  Each item is (function_name, args_dict).
-pending_tool_calls: queue.Queue[tuple[str, dict]] = queue.Queue()
 
 SYSTEM_PROMPT = """You are a friendly, encouraging child assistant called Lumi.
 You can see the child's work surface through a camera.
@@ -64,46 +68,141 @@ VIEWING THE TABLE:
 MODEL = "gemini-2.5-flash-native-audio-latest"
 
 
-def _clean_args(args: dict, func) -> dict:
-    """Strip unexpected kwargs that Gemini sometimes sends (training artifacts)."""
-    import inspect
-    valid = set(inspect.signature(func).parameters.keys())
-    return {k: v for k, v in args.items() if k in valid}
+# ---------------------------------------------------------------------------
+# Auto-generate JSON tool schemas from Python function signatures
+# ---------------------------------------------------------------------------
+
+_PYTHON_TYPE_TO_JSON: dict[str, str] = {
+    "str": "STRING",
+    "int": "INTEGER",
+    "float": "NUMBER",
+    "bool": "BOOLEAN",
+    "dict": "OBJECT",
+}
 
 
-def _before_tool(tool, args, tool_context):
-    """Intercept tool calls — execute and return result directly.
+def _python_type_to_schema(annotation: Any) -> dict:
+    """Convert a Python type annotation to a JSON Schema-like dict.
 
-    The Live API native-audio model is flaky with ADK's automatic tool
-    response handling. By returning a result here, ADK skips its own
-    dispatch and sends our result back to the model.
-
-    We also stash the args in pending_tool_calls so the backend can
-    forward them to the edge client even if the Live API crashes before
-    the event with part.function_call is yielded.
+    Handles: str, int, float, bool, dict, list[X].
+    Falls back to STRING for unrecognised types.
     """
-    if tool.name == "project_overlay":
-        clean = _clean_args(dict(args), project_overlay)
-        pending_tool_calls.put((tool.name, clean))
-        result = project_overlay(**clean)
-        return result
-    if tool.name == "refresh_view":
-        clean = _clean_args(dict(args), refresh_view)
-        pending_tool_calls.put((tool.name, clean))
-        result = refresh_view(**clean)
-        return result
-    if tool.name == "show_scene":
-        clean = _clean_args(dict(args), show_scene)
-        pending_tool_calls.put((tool.name, clean))
-        result = show_scene(**clean)
-        return result
-    return None  # Let ADK handle other tools normally
+    if annotation is inspect.Parameter.empty:
+        return {"type": "STRING"}
+
+    # Handle list[X] / List[X]
+    origin = getattr(annotation, "__origin__", None)
+    if origin is list:
+        args = getattr(annotation, "__args__", ())
+        if args:
+            return {"type": "ARRAY", "items": _python_type_to_schema(args[0])}
+        return {"type": "ARRAY"}
+
+    # Get the string name of the type
+    type_name = getattr(annotation, "__name__", None)
+    if type_name in _PYTHON_TYPE_TO_JSON:
+        return {"type": _PYTHON_TYPE_TO_JSON[type_name]}
+
+    return {"type": "STRING"}
 
 
-root_agent = Agent(
-    name="lumi_tutor",
-    model=MODEL,
-    instruction=SYSTEM_PROMPT,
-    tools=[project_overlay, refresh_view, show_scene],
-    before_tool_callback=_before_tool,
-)
+def _parse_docstring_params(docstring: str) -> dict[str, str]:
+    """Extract parameter descriptions from a Google-style docstring.
+
+    Looks for an Args: section and parses lines like:
+        param_name: Description text that may span
+            multiple indented lines.
+
+    Returns:
+        Mapping of parameter name to description string.
+    """
+    if not docstring:
+        return {}
+
+    lines = docstring.split("\n")
+    in_args = False
+    params: dict[str, str] = {}
+    current_param: str | None = None
+    current_desc: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        # Detect start of Args section
+        if stripped in ("Args:", "Arguments:", "Parameters:"):
+            in_args = True
+            continue
+        # Detect end of Args section (another section header like "Returns:")
+        if in_args and stripped and re.match(r"^[A-Z][a-z]+:$", stripped):
+            if current_param:
+                params[current_param] = " ".join(current_desc).strip()
+            break
+        if not in_args:
+            continue
+
+        # Try to match a new parameter line: "  param_name: description"
+        m = re.match(r"^\s{4,}(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)", line)
+        if m:
+            if current_param:
+                params[current_param] = " ".join(current_desc).strip()
+            current_param = m.group(1)
+            current_desc = [m.group(2)] if m.group(2) else []
+        elif current_param and stripped:
+            current_desc.append(stripped)
+
+    # Save last param
+    if current_param and current_param not in params:
+        params[current_param] = " ".join(current_desc).strip()
+
+    return params
+
+
+def function_to_declaration(func: Callable) -> dict:
+    """Generate a Gemini function_declaration dict from a Python function.
+
+    Uses inspect.signature for parameter types and the docstring for
+    descriptions. The first paragraph of the docstring becomes the
+    function description.
+    """
+    sig = inspect.signature(func)
+    hints = get_type_hints(func)
+    docstring = inspect.getdoc(func) or ""
+    param_docs = _parse_docstring_params(docstring)
+
+    # First paragraph of docstring = function description
+    func_desc = docstring.split("\n\n")[0].strip() if docstring else func.__name__
+
+    properties: dict[str, dict] = {}
+    required: list[str] = []
+
+    for name, param in sig.parameters.items():
+        annotation = hints.get(name, param.annotation)
+        schema = _python_type_to_schema(annotation)
+        if name in param_docs:
+            schema["description"] = param_docs[name]
+        properties[name] = schema
+        if param.default is inspect.Parameter.empty:
+            required.append(name)
+
+    declaration: dict[str, Any] = {
+        "name": func.__name__,
+        "description": func_desc,
+        "parameters": {
+            "type": "OBJECT",
+            "properties": properties,
+        },
+    }
+    if required:
+        declaration["parameters"]["required"] = required
+
+    return declaration
+
+
+# ---------------------------------------------------------------------------
+# Build tool declarations and registry from the tool functions
+# ---------------------------------------------------------------------------
+
+_TOOL_FUNCTIONS: list[Callable] = [project_overlay, refresh_view, show_scene]
+
+TOOL_DECLARATIONS: list[dict] = [function_to_declaration(f) for f in _TOOL_FUNCTIONS]
+
+TOOL_REGISTRY: dict[str, Callable] = {f.__name__: f for f in _TOOL_FUNCTIONS}

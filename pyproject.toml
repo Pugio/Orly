@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Projected AR tutoring system powered by Gemini Live API"
 requires-python = ">=3.12"
 dependencies = [
-    "google-adk",
+    "google-genai",
+    "fastapi",
+    "uvicorn[standard]",
     "opencv-contrib-python",
     "numpy",
     "matplotlib",
@@ -17,13 +19,16 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+adk = [
+    "google-adk",
+]
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["client*", "backend*"]
+include = ["client*", "backend*", "simulation*"]
 
 [tool.pytest.ini_options]
 
