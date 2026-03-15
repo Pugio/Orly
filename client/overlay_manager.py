@@ -49,8 +49,10 @@ class OverlayManager:
         self.white_bg = white_bg
         self.session_store = session_store
         self.notify_fn = notify_fn
+        self.overlay_state = None  # set externally to register async image completions
         self.canvas = self._make_bg()
         self._has_content = False
+        self._last_rendered_overlay: np.ndarray | None = None  # for overlay_state registration
         # Named scene gallery: title → BGR numpy array.
         self.scenes: dict[str, np.ndarray] = {}
         # Ordered list of scene names for "reference_previous".
@@ -74,20 +76,7 @@ class OverlayManager:
         title = result.get("title", "")
         data = result.get("data", {})
 
-        # Enforce minimum placement size for text-heavy content types so
-        # they remain readable on a low-res projector.
-        if content_type in ("markdown", "annotation"):
-            y_min, x_min, y_max, x_max = placement
-            min_w, min_h = 500, 400
-            if (x_max - x_min) < min_w:
-                x_max = min(1000, x_min + min_w)
-                if (x_max - x_min) < min_w:
-                    x_min = max(0, x_max - min_w)
-            if (y_max - y_min) < min_h:
-                y_max = min(1000, y_min + min_h)
-                if (y_max - y_min) < min_h:
-                    y_min = max(0, y_max - min_h)
-            placement = [y_min, x_min, y_max, x_max]
+        placement = self.adjust_text_placement(content_type, placement)
 
         if content_type == "image":
             # Image generation is slow — show loading placeholder immediately,
@@ -108,6 +97,7 @@ class OverlayManager:
 
         overlay = self.render_overlay(content_type, placement, title, data)
         self._show_overlay(overlay, placement, content_type)
+        self._last_rendered_overlay = overlay  # cached for overlay_state registration
         logger.info("Rendered %s at %s", content_type, placement)
 
     def _show_overlay(self, overlay: np.ndarray, placement: list, content_type: str):
@@ -159,6 +149,12 @@ class OverlayManager:
                 self.session_store.save_image(title, overlay)
 
             self._show_overlay(overlay, placement, "image")
+
+            # Register in overlay_state (no recomposite — we just placed it).
+            if self.overlay_state:
+                self.overlay_state.add(
+                    title, "image", placement, title, data, overlay,
+                    recomposite=False)
 
             if self.notify_fn:
                 self.notify_fn(f"Image '{title}' is ready and displayed.")
@@ -322,6 +318,28 @@ class OverlayManager:
             return [1000 - xmax, ymin, 1000 - xmin, ymax]
 
         return placement
+
+    @staticmethod
+    def adjust_text_placement(content_type: str, placement: list) -> list:
+        """Enforce minimum placement size for text-heavy content types.
+
+        Expands markdown/annotation placements to at least 500x400 units
+        so text remains readable on a low-res projector. Returns the
+        (possibly expanded) placement. Non-text types are returned unchanged.
+        """
+        if content_type not in ("markdown", "annotation"):
+            return placement
+        y_min, x_min, y_max, x_max = placement
+        min_w, min_h = 500, 400
+        if (x_max - x_min) < min_w:
+            x_max = min(1000, x_min + min_w)
+            if (x_max - x_min) < min_w:
+                x_min = max(0, x_max - min_w)
+        if (y_max - y_min) < min_h:
+            y_max = min(1000, y_min + min_h)
+            if (y_max - y_min) < min_h:
+                y_min = max(0, y_max - min_h)
+        return [y_min, x_min, y_max, x_max]
 
     def _make_bg(self) -> np.ndarray:
         """Create a blank background canvas."""

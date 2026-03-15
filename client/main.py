@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -98,7 +99,7 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 overlay_manager.last_clean_frame = jpeg_bytes
             await client.send_video(jpeg_bytes)
 
-        # Dispatch frame to running programs for object tracking & callbacks.
+        # Decode frame for programs and object tracking.
         if program_runtime and jpeg_bytes:
             frame_arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
             decoded = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
@@ -161,19 +162,6 @@ async def text_input_loop(client: TableLightClient):
         if line:
             await client.send_text(line)
             print(f"[You] {line}")
-
-
-async def display_loop(overlay_manager: OverlayManager, mode: str):
-    """Update the projector/screen overlay display."""
-    win_name = "TableLight Overlay"
-    while True:
-        canvas = overlay_manager.canvas
-        if mode == "projector":
-            show_on_projector(win_name, canvas, fullscreen=True)
-        else:
-            show_on_laptop(win_name, canvas)
-        cv2.waitKey(1)
-        await asyncio.sleep(0.05)  # ~20fps, yield to event loop
 
 
 # ---------------------------------------------------------------------------
@@ -301,14 +289,12 @@ async def main(args: argparse.Namespace | None = None):
 
     # --- Overlay state manager (named overlay tracking) ---
     overlay_state = OverlayStateManager(overlay_manager)
+    overlay_manager.overlay_state = overlay_state
 
     # --- Object tracker ---
     object_tracker = ObjectTracker()
 
     # --- Program runtime ---
-    # Latest decoded frame, updated by video_loop.
-    _latest_frame = {"frame": None}
-
     def _make_table_api():
         """Factory: creates a fresh TableAPI for each program."""
         def _program_notify(msg):
@@ -320,10 +306,11 @@ async def main(args: argparse.Namespace | None = None):
             object_tracker=object_tracker,
             session_store=session_store,
             notify_fn=_program_notify,
-            get_frame_fn=lambda: _latest_frame["frame"],
+            get_frame_fn=lambda: program_runtime._latest_frame,
         )
 
     program_runtime = ProgramRuntime(table_api_factory=_make_table_api)
+    program_runtime._object_tracker = object_tracker
     _shared_state["program_runtime"] = program_runtime
 
     # --- Audio ---
@@ -348,8 +335,25 @@ async def main(args: argparse.Namespace | None = None):
         overlay_manager.handle_tool_result(name, result)
         content_type = result.get("content_type", "unknown")
         title = result.get("title", "")
+        # Register in overlay_state so get_overlay_state() reflects tool-created
+        # overlays. We pass recomposite=False because handle_tool_result already
+        # placed the overlay on canvas — we just need to track the metadata.
+        if name == "project_overlay" and result.get("status") == "displayed":
+            placement = list(result.get("placement", [0, 0, 1000, 1000]))
+            data = result.get("data", {})
+            if content_type != "image":  # images register async after generation
+                try:
+                    adjusted = OverlayManager.adjust_text_placement(
+                        content_type, placement)
+                    # Use the cached rendered overlay instead of re-rendering.
+                    overlay_img = overlay_manager._last_rendered_overlay
+                    if overlay_img is not None:
+                        overlay_state.add(title or content_type, content_type,
+                                          adjusted, title, data, overlay_img,
+                                          recomposite=False)
+                except Exception:
+                    pass
         print(f"[TableLight] Overlay projected: {content_type} — {title}")
-        # Canvas is updated — main thread display loop will pick it up
 
     _last_direction = {"value": None}
 
@@ -368,7 +372,7 @@ async def main(args: argparse.Namespace | None = None):
         print(text, end="", flush=True)
 
     async def on_interrupted():
-        overlay_manager.clear()
+        overlay_state.clear()  # clears both state tracking and canvas
         print("[TableLight] Interrupted — overlays cleared.")
 
     async def on_refresh_view():
@@ -395,8 +399,14 @@ async def main(args: argparse.Namespace | None = None):
             for p in program_runtime.list_programs()
         ]
         # Send state back as a notification so Gemini can see it.
-        import json
         await client.send_notification("overlay_state", json.dumps(state, default=str))
+
+    async def on_list_programs():
+        programs = [
+            {"name": p.name, "state": p.state, "description": p.description}
+            for p in program_runtime.list_programs()
+        ]
+        await client.send_notification("list_programs", json.dumps(programs, default=str))
 
     client.on_audio(on_audio)
     client.on_tool_result(on_tool_result)
@@ -406,6 +416,7 @@ async def main(args: argparse.Namespace | None = None):
     client.on_run_program(on_run_program)
     client.on_stop_program(on_stop_program)
     client.on_get_overlay_state(on_get_overlay_state)
+    client.on_list_programs(on_list_programs)
 
     # --- Connect ---
     print(f"[TableLight] Connecting to backend at {args.backend} ...")
@@ -506,7 +517,6 @@ def run():
 
     # Install SIGINT handler that forces exit on second Ctrl+C.
     _interrupt_count = {"n": 0}
-    _original_sigint = signal.getsignal(signal.SIGINT)
 
     def _sigint_handler(signum, frame):
         _interrupt_count["n"] += 1
