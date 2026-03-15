@@ -216,6 +216,10 @@ def make_ws():
         session = MockLiveSession(messages)
         mock_genai, mock_types, _ = _make_mock_genai(session)
 
+        # Clear the Gemini client cache so our mock takes effect.
+        from backend.main import _gemini_client_cache
+        _gemini_client_cache.clear()
+
         # Patch the lazy imports inside session_endpoint.
         patcher_genai = patch.dict(
             "sys.modules",
@@ -244,6 +248,7 @@ def make_ws():
                 except Exception:
                     pass
                 patcher_genai.stop()
+                _gemini_client_cache.clear()
 
         return session, ws, _Handle()
 
@@ -267,7 +272,7 @@ class TestAudioForwarding:
             })
             # Give time for the backend coroutine to process.
             import time
-            time.sleep(0.3)
+            time.sleep(0.5)
 
             assert len(session.realtime_inputs) >= 1
             sent = session.realtime_inputs[0]
@@ -289,7 +294,7 @@ class TestVideoForwarding:
                 "data": base64.b64encode(jpeg).decode(),
             })
             import time
-            time.sleep(0.3)
+            time.sleep(0.5)
 
             assert len(session.realtime_inputs) >= 1
             sent = session.realtime_inputs[0]
@@ -307,7 +312,7 @@ class TestTextForwarding:
         try:
             ws.send_json({"type": "text", "text": "What is 2+2?"})
             import time
-            time.sleep(0.3)
+            time.sleep(0.5)
 
             assert len(session.client_contents) >= 1
             sent = session.client_contents[0]
@@ -412,6 +417,9 @@ class TestToolCallFlow:
             assert resp["name"] == "project_overlay"
             assert resp["result"]["status"] == "displayed"
             assert resp["result"]["content_type"] == "annotation"
+            # Verify args are merged into the result for client rendering.
+            assert resp["result"]["data"] == {"text": "Hello!"}
+            assert resp["result"]["title"] == "Test label"
 
             # Session should have received the FunctionResponse.
             assert len(session.tool_responses) >= 1

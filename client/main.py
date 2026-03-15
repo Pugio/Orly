@@ -77,7 +77,6 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 await client.send_video(jpeg_bytes)
                 overlay_manager.complete_refresh()
                 refresh_wait_frames = 0
-                frame_count += 1
                 await asyncio.sleep(interval)
                 continue
 

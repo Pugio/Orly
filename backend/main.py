@@ -113,6 +113,39 @@ def execute_tool(function_name: str, args: dict, registry: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Gemini client singleton (shared across connections)
+# ---------------------------------------------------------------------------
+
+_gemini_client_cache: dict = {}
+
+
+def _get_gemini_client(genai):
+    """Get or create a shared Gemini client. Cached per process."""
+    if "client" not in _gemini_client_cache:
+        api_key = (
+            os.environ.get("GOOGLE_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+        )
+        if not api_key:
+            import subprocess
+            try:
+                api_key = subprocess.check_output(
+                    ["llm", "keys", "get", "gemini"], text=True
+                ).strip()
+            except Exception:
+                pass
+        is_vertex = not bool(api_key)
+        if api_key:
+            client = genai.Client(api_key=api_key)
+        else:
+            client = genai.Client()
+        _gemini_client_cache["client"] = client
+        _gemini_client_cache["is_vertex"] = is_vertex
+        logger.info("Created Gemini client (vertex=%s)", is_vertex)
+    return _gemini_client_cache["client"], _gemini_client_cache["is_vertex"]
+
+
+# ---------------------------------------------------------------------------
 # WebSocket endpoint — raw google-genai Live API
 # ---------------------------------------------------------------------------
 
@@ -138,27 +171,8 @@ async def session_endpoint(websocket: WebSocket) -> None:
     text_only = init_msg.get("text_only", False)
     logger.info("Session started (text_only=%s)", text_only)
 
-    # Build Gemini client.
-    api_key = (
-        os.environ.get("GOOGLE_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-    )
-    if not api_key:
-        # Fallback: try `llm keys get gemini` (simon willison's llm tool).
-        import subprocess
-        try:
-            api_key = subprocess.check_output(
-                ["llm", "keys", "get", "gemini"], text=True
-            ).strip()
-        except Exception:
-            pass
-    # Detect whether we're using Vertex AI or Google AI API key.
-    is_vertex = not bool(api_key)
-    if api_key:
-        client = genai.Client(api_key=api_key)
-    else:
-        # Vertex AI via Application Default Credentials
-        client = genai.Client()
+    # Get or create the shared Gemini client (one per process).
+    client, is_vertex = _get_gemini_client(genai)
 
     # Build config — some features are Vertex AI only.
     config_kwargs = dict(
@@ -178,7 +192,7 @@ async def session_endpoint(websocket: WebSocket) -> None:
                 start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
                 end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
                 prefix_padding_ms=200,
-                silence_duration_ms=1000,
+                silence_duration_ms=500,
             )
         ),
         input_audio_transcription={},
@@ -317,10 +331,16 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                 result = execute_tool(
                                     fn_name, fn_args, TOOL_REGISTRY
                                 )
-                                # Forward to edge client for rendering.
+                                # Forward args + status to edge client for
+                                # rendering. The client needs the original
+                                # args (data, placement, etc.) not just the
+                                # status dict the tool returns.
+                                client_payload = {**fn_args, **result}
                                 try:
                                     await websocket.send_json(
-                                        format_tool_result(fn_name, result)
+                                        format_tool_result(
+                                            fn_name, client_payload
+                                        )
                                     )
                                 except Exception:
                                     pass
