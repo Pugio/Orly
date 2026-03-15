@@ -42,10 +42,18 @@ logger = logging.getLogger(__name__)
 async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float):
     """Capture and send video frames at the specified FPS."""
     interval = 1.0 / fps
+    frame_count = 0
     while True:
         jpeg_bytes, _ = camera.get_rectified_frame()
         if jpeg_bytes:
             await client.send_video(jpeg_bytes)
+            frame_count += 1
+            # Save periodically for debugging
+            if frame_count <= 3:
+                path = f"debug_sent_frame_{frame_count}.jpg"
+                with open(path, "wb") as f:
+                    f.write(jpeg_bytes)
+                print(f"[TableLight] Saved frame to {path} ({len(jpeg_bytes)} bytes)")
         await asyncio.sleep(interval)
 
 
