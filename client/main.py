@@ -63,7 +63,7 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
     while True:
         # Run blocking camera capture in executor so it doesn't stall
         # the event loop (audio send/receive must keep flowing).
-        jpeg_bytes, _ = await loop.run_in_executor(
+        jpeg_bytes, raw_frame, _ = await loop.run_in_executor(
             None, camera.get_rectified_frame
         )
         if not jpeg_bytes:
@@ -99,12 +99,9 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 overlay_manager.last_clean_frame = jpeg_bytes
             await client.send_video(jpeg_bytes)
 
-        # Decode frame for programs and object tracking.
-        if program_runtime and jpeg_bytes:
-            frame_arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-            decoded = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
-            if decoded is not None:
-                program_runtime.process_frame(decoded)
+        # Pass raw frame to programs and object tracking (no JPEG decode).
+        if program_runtime and raw_frame is not None:
+            program_runtime.process_frame(raw_frame)
 
         await asyncio.sleep(interval)
 

@@ -147,17 +147,17 @@ class TestHomographyCaching:
         cam = _make_camera_with_mock(frames)
 
         # Frame 1: markers present
-        jpeg1, H1 = cam.get_rectified_frame()
+        jpeg1, _, H1 = cam.get_rectified_frame()
         assert jpeg1 is not None
         assert H1 is not None
 
         # Frame 2: no markers — should use cached H
-        jpeg2, H2 = cam.get_rectified_frame()
+        jpeg2, _, H2 = cam.get_rectified_frame()
         assert jpeg2 is not None
         np.testing.assert_array_equal(H2, H1)
 
         # Frame 3: markers return — H refreshed
-        jpeg3, H3 = cam.get_rectified_frame()
+        jpeg3, _, H3 = cam.get_rectified_frame()
         assert jpeg3 is not None
         assert H3 is not None
 
@@ -169,26 +169,26 @@ class TestHomographyCaching:
         frames = [good, good] + [blank, blank] * 9 + [good, good]
         cam = _make_camera_with_mock(frames)
 
-        jpeg, H_first = cam.get_rectified_frame()
+        jpeg, _, H_first = cam.get_rectified_frame()
         assert jpeg is not None
 
         for _ in range(9):
-            jpeg, H = cam.get_rectified_frame()
+            jpeg, _, H = cam.get_rectified_frame()
             assert jpeg is not None
             np.testing.assert_array_equal(H, H_first)
 
-        jpeg, H_last = cam.get_rectified_frame()
+        jpeg, _, H_last = cam.get_rectified_frame()
         assert jpeg is not None
         assert H_last is not None
 
     def test_no_cache_no_markers_returns_none(self):
-        """No cached H and no markers -> (None, None)."""
+        """No cached H and no markers -> (None, None, None)."""
         blank = _make_blank_image()
         frames = [blank, blank] * 5
         cam = _make_camera_with_mock(frames)
 
         for _ in range(5):
-            jpeg, H = cam.get_rectified_frame()
+            jpeg, _, H = cam.get_rectified_frame()
             assert jpeg is None
             assert H is None
 
@@ -199,8 +199,8 @@ class TestHomographyCaching:
         frames = [good1, good1, good2, good2]
         cam = _make_camera_with_mock(frames)
 
-        _, H1 = cam.get_rectified_frame()
-        _, H2 = cam.get_rectified_frame()
+        _, _, H1 = cam.get_rectified_frame()
+        _, _, H2 = cam.get_rectified_frame()
         assert H1 is not None and H2 is not None
         assert not np.allclose(H1, H2, atol=1e-3)
 
@@ -212,10 +212,10 @@ class TestHomographyCaching:
 
 class TestDroppedFrames:
     def test_dropped_frame_returns_none(self):
-        """read() returning False -> get_rectified_frame returns (None, None)."""
+        """read() returning False -> get_rectified_frame returns (None, None, None)."""
         frames = [None, None]  # grab consumes first None, read gets second None
         cam = _make_camera_with_mock(frames)
-        jpeg, H = cam.get_rectified_frame()
+        jpeg, _, H = cam.get_rectified_frame()
         assert jpeg is None
         assert H is None
 
@@ -226,10 +226,10 @@ class TestDroppedFrames:
         cam = _make_camera_with_mock(frames)
 
         for _ in range(3):
-            jpeg, H = cam.get_rectified_frame()
+            jpeg, _, H = cam.get_rectified_frame()
             assert jpeg is None
 
-        jpeg, H = cam.get_rectified_frame()
+        jpeg, _, H = cam.get_rectified_frame()
         assert jpeg is not None
         assert H is not None
 
@@ -340,7 +340,7 @@ class TestRotation:
         good = _make_table_image()
         frames = [good, good]
         cam = _make_camera_with_mock(frames, rotate=rotate)
-        jpeg, _ = cam.get_rectified_frame()
+        jpeg, *_ = cam.get_rectified_frame()
         assert jpeg is not None
         return jpeg
 
@@ -363,8 +363,8 @@ class TestRotation:
         cam0 = _make_camera_with_mock(frames_0, rotate=0)
         cam180 = _make_camera_with_mock(frames_180, rotate=180)
 
-        jpeg0, _ = cam0.get_rectified_frame()
-        jpeg180, _ = cam180.get_rectified_frame()
+        jpeg0, *_ = cam0.get_rectified_frame()
+        jpeg180, *_ = cam180.get_rectified_frame()
 
         img0 = cv2.imdecode(np.frombuffer(jpeg0, np.uint8), cv2.IMREAD_COLOR)
         img180 = cv2.imdecode(np.frombuffer(jpeg180, np.uint8), cv2.IMREAD_COLOR)
@@ -472,7 +472,7 @@ class TestFullPipeline:
         frames = [warped, warped]
         cam = _make_camera_with_mock(frames, rotate=180)
 
-        jpeg, H = cam.get_rectified_frame()
+        jpeg, _, H = cam.get_rectified_frame()
         assert jpeg is not None
         assert H is not None
         decoded = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)

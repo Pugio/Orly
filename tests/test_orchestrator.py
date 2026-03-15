@@ -99,7 +99,7 @@ class TestVideoLoop:
 
             def get_rectified_frame(self):
                 self.call_count += 1
-                return b"fake-jpeg-data", None
+                return b"fake-jpeg-data", None, None
 
         # Mock client that records sent messages
         class MockClient:
@@ -131,7 +131,7 @@ class TestVideoLoop:
 
         class MockCamera:
             def get_rectified_frame(self):
-                return None, None
+                return None, None, None
 
         class MockClient:
             def __init__(self):

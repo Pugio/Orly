@@ -130,7 +130,7 @@ class CameraCapture:
     Usage:
         cam = CameraCapture(url="http://192.168.1.100:8080")
         cam.start()
-        jpeg_bytes, H = cam.get_rectified_frame()
+        jpeg_bytes, raw_frame, H = cam.get_rectified_frame()
         cam.stop()
     """
 
@@ -223,15 +223,15 @@ class CameraCapture:
         self.stats["consecutive_failures"] = 0
         return frame
 
-    def get_rectified_frame(self) -> tuple[bytes | None, np.ndarray | None]:
-        """Capture a frame, rectify it, return (jpeg_bytes, H_cam).
+    def get_rectified_frame(self) -> tuple[bytes | None, np.ndarray | None, np.ndarray | None]:
+        """Capture a frame, rectify it, return (jpeg_bytes, raw_ndarray, H_cam).
 
-        Returns (None, None) if no frame available or no homography
+        Returns (None, None, None) if no frame available or no homography
         (current or cached).
         """
         frame = self._capture_frame()
         if frame is None:
-            return None, None
+            return None, None, None
 
         self.stats["frames_captured"] += 1
 
@@ -247,7 +247,7 @@ class CameraCapture:
             self.stats["frames_using_cache"] += 1
 
         if self.H_cached is None:
-            return None, None
+            return None, None, None
 
         # Rectify and encode
         rectified = rectify_frame(frame, self.H_cached, self.output_size)
@@ -262,7 +262,7 @@ class CameraCapture:
 
         jpeg_bytes = encode_jpeg(rectified)
 
-        return jpeg_bytes, self.H_cached
+        return jpeg_bytes, rectified, self.H_cached
 
     def stop(self):
         """Release camera."""
