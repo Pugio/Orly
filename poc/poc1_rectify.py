@@ -27,11 +27,18 @@ Usage:
 """
 
 import argparse
+import os
+import queue
 import sys
+import threading
 import time
 
 import cv2
 import numpy as np
+
+# Add project root to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from client.display import show_on_laptop
 
 
 # --- Configuration ---
@@ -190,7 +197,23 @@ def main():
     frame_count = 0
     fps_time = time.time()
 
-    print("\nControls: q=quit, s=save rectified image, d=toggle debug overlay\n")
+    print("\nControls: q=quit, s=save rectified image, h=save homography, d=toggle debug overlay")
+    print("(Type command + Enter in terminal, or press key in OpenCV window)\n")
+
+    # Background thread to read stdin without blocking
+    key_queue = queue.Queue()
+
+    def stdin_reader():
+        while True:
+            try:
+                line = sys.stdin.readline().strip().lower()
+                if line:
+                    key_queue.put(ord(line[0]))
+            except EOFError:
+                break
+
+    stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
+    stdin_thread.start()
 
     while True:
         ret, frame = cap.read()
@@ -240,21 +263,32 @@ def main():
         if cam_w > 800:
             scale = 800 / cam_w
             cam_display = cv2.resize(cam_display, None, fx=scale, fy=scale)
-        cv2.imshow("Camera View", cam_display)
+        show_on_laptop("Camera View", cam_display)
 
         # Show rectified view if we have a homography
         if H_current is not None:
             rectified = cv2.warpPerspective(frame, H_current, (OUTPUT_W, OUTPUT_H))
-            cv2.imshow("Rectified Table View", rectified)
+            show_on_laptop("Rectified Table View", rectified)
 
-        # Handle keys
+        # Handle keys — from OpenCV window OR terminal stdin
         key = cv2.waitKey(1) & 0xFF
+
+        # Check for terminal input from background thread
+        if key == 255:
+            try:
+                key = key_queue.get_nowait()
+            except queue.Empty:
+                pass
+
         if key == ord('q'):
             break
         elif key == ord('s') and H_current is not None:
             rectified = cv2.warpPerspective(frame, H_current, (OUTPUT_W, OUTPUT_H))
             cv2.imwrite("rectified_output.png", rectified)
             print("Saved rectified_output.png")
+        elif key == ord('h') and H_current is not None:
+            np.savez("camera_homography.npz", H_cam=H_current)
+            print("Saved camera_homography.npz")
         elif key == ord('d'):
             show_debug = not show_debug
             print(f"Debug overlay: {'ON' if show_debug else 'OFF'}")

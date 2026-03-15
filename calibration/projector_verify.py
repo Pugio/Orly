@@ -9,15 +9,15 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 
 import cv2
 import numpy as np
 
-from calibration.projector_calibrate import (
-    create_dot_image,
-    table_to_projector,
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from calibration.projector_calibrate import table_to_projector
+from client.display import show_on_projector
 
 
 def create_verification_pattern(
@@ -121,11 +121,8 @@ def main():
     grid_img = create_verification_pattern(proj_width, proj_height, H_proj)
     crosshair_img = create_crosshair_pattern(proj_width, proj_height, H_proj)
 
-    # Show on projector
+    # Show on projector (extended display)
     win_name = "Projector Verification"
-    cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
-    cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
     patterns = [
         ("Grid pattern (dots at every 200 table units)", grid_img),
         ("Crosshair at center + corner markers", crosshair_img),
@@ -138,7 +135,7 @@ def main():
     print("  q         — quit")
     print(f"\nShowing: {patterns[current][0]}")
 
-    cv2.imshow(win_name, patterns[current][1])
+    show_on_projector(win_name, patterns[current][1], fullscreen=True)
 
     while True:
         key = cv2.waitKey(0) & 0xFF
@@ -147,11 +144,11 @@ def main():
         elif key in (ord(" "), ord("n")):
             current = (current + 1) % len(patterns)
             print(f"Showing: {patterns[current][0]}")
-            cv2.imshow(win_name, patterns[current][1])
+            show_on_projector(win_name, patterns[current][1])
         elif key == ord("p"):
             current = (current - 1) % len(patterns)
             print(f"Showing: {patterns[current][0]}")
-            cv2.imshow(win_name, patterns[current][1])
+            show_on_projector(win_name, patterns[current][1])
 
     cv2.destroyAllWindows()
     print("Done.")

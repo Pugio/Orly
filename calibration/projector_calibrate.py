@@ -13,11 +13,15 @@ Interactive calibration procedure:
 """
 
 import argparse
+import os
 import sys
 import time
 
 import cv2
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from client.display import show_on_projector, get_projector_resolution
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +154,58 @@ def table_to_projector(
 # ---------------------------------------------------------------------------
 
 
+def detect_camera_homography(cap: cv2.VideoCapture) -> np.ndarray:
+    """Detect ArUco markers and compute H_cam live.
+
+    Reuses the same ArUco config as PoC 1 / generate_calibration_mat.py.
+    Waits until all 4 markers are detected, then computes the homography.
+    """
+    ARUCO_DICT = cv2.aruco.DICT_4X4_50
+    MARKER_IDS = [0, 1, 2, 3]
+    CORNER_INDICES = {0: 2, 1: 3, 2: 0, 3: 1}
+    # Output size matches PoC 1 — A4 aspect ratio
+    OUTPUT_W, OUTPUT_H = 600, 848
+    DST_POINTS = np.array([
+        [0, 0], [OUTPUT_W, 0], [OUTPUT_W, OUTPUT_H], [0, OUTPUT_H],
+    ], dtype=np.float32)
+
+    dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
+    parameters = cv2.aruco.DetectorParameters()
+    detector = cv2.aruco.ArucoDetector(dictionary, parameters)
+
+    print("Detecting ArUco markers to compute camera homography...")
+    print("Make sure the calibration mat is visible to the camera.")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(0.1)
+            continue
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = detector.detectMarkers(gray)
+
+        detected = {}
+        if ids is not None:
+            for i, mid in enumerate(ids.flatten()):
+                detected[int(mid)] = corners[i][0]
+
+        if all(mid in detected for mid in MARKER_IDS):
+            src_points = []
+            for idx, mid in enumerate(MARKER_IDS):
+                src_points.append(detected[mid][CORNER_INDICES[mid]])
+
+            src = np.array(src_points, dtype=np.float32)
+            H, _ = cv2.findHomography(src, DST_POINTS)
+            if H is not None:
+                print(f"  All 4 markers detected. H_cam computed.")
+                return H
+
+        found = sorted(detected.keys())
+        print(f"  Found markers: {found} — need all of {MARKER_IDS}", end="\r")
+        time.sleep(0.2)
+
+
 def open_camera(url: str | None = None, webcam: int | None = None) -> cv2.VideoCapture:
     """Open a camera source."""
     if url:
@@ -199,8 +255,8 @@ def main():
     parser.add_argument("--url", type=str, help="IP Webcam URL")
     parser.add_argument("--webcam", type=int, default=None, help="Local webcam index")
     parser.add_argument(
-        "--h-cam", type=str, required=True,
-        help="Path to camera homography .npz file (from PoC 1)",
+        "--h-cam", type=str, default=None,
+        help="Path to camera homography .npz file. If omitted, detects ArUco markers live.",
     )
     parser.add_argument("--proj-width", type=int, default=1280)
     parser.add_argument("--proj-height", type=int, default=720)
@@ -221,12 +277,16 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Load camera homography
-    H_cam = load_camera_homography(args.h_cam)
-    print(f"Loaded camera homography from {args.h_cam}")
-
     # Open camera
     cap = open_camera(url=args.url, webcam=args.webcam)
+
+    # Load or compute camera homography
+    if args.h_cam:
+        H_cam = load_camera_homography(args.h_cam)
+        print(f"Loaded camera homography from {args.h_cam}")
+    else:
+        H_cam = detect_camera_homography(cap)
+        print("Computed camera homography from ArUco markers")
 
     # Generate calibration grid
     grid = generate_calibration_grid(
@@ -235,14 +295,10 @@ def main():
     )
     print(f"Calibration grid: {args.cols}x{args.rows} = {len(grid)} points")
 
-    # Open fullscreen window on projector
+    # Open fullscreen window on projector (extended display, not mirrored)
     win_name = "Projector Calibration"
-    cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
-    cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
-    # Show black screen and capture background
     black = np.zeros((args.proj_height, args.proj_width, 3), dtype=np.uint8)
-    cv2.imshow(win_name, black)
+    show_on_projector(win_name, black, fullscreen=True)
     cv2.waitKey(500)
 
     print("Capturing background frame...")
@@ -257,7 +313,7 @@ def main():
 
         # Project the dot
         dot_img = create_dot_image(args.proj_width, args.proj_height, (px, py))
-        cv2.imshow(win_name, dot_img)
+        show_on_projector(win_name, dot_img)
         cv2.waitKey(500)  # Wait for projector to display + camera to settle
 
         # Capture frame
@@ -288,7 +344,7 @@ def main():
         projector_points.append((px, py))
 
         # Show black again before next dot
-        cv2.imshow(win_name, black)
+        show_on_projector(win_name, black)
         cv2.waitKey(200)
 
     # Need at least 4 correspondences
