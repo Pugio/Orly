@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
 
-from backend.tools import play_music, stop_music, pause_music, resume_music, replay_music
+from backend.tools import music
 from client.music_player import MusicPlayer, DEFAULT_SAMPLE_RATE, DEFAULT_CHANNELS
 from client.session_store import SessionStore
 
@@ -20,37 +20,39 @@ from client.session_store import SessionStore
 
 class TestPlayMusicTool:
     def test_returns_starting(self):
-        result = play_music("track", "gentle piano")
+        result = music(action="play", name="track", prompt="gentle piano")
         assert result["status"] == "starting"
         assert result["name"] == "track"
         assert result["prompt"] == "gentle piano"
 
     def test_default_params(self):
-        result = play_music("track", "piano")
-        assert result["bpm"] == 120
-        assert result["temperature"] == 1.0
-        assert result["guidance"] == 3.0
+        # bpm/temperature/guidance stripped from response (kept in args
+        # for client forwarding, not sent back to Gemini).
+        result = music(action="play", name="track", prompt="piano")
+        assert result["status"] == "starting"
+        assert result["name"] == "track"
+        assert result["prompt"] == "piano"
 
 
 class TestStopMusicTool:
     def test_returns_stopping(self):
-        result = stop_music("track")
+        result = music(action="stop", name="track")
         assert result["status"] == "stopping"
 
 
 class TestPauseMusicTool:
     def test_returns_pausing(self):
-        assert pause_music()["status"] == "pausing"
+        assert music(action="pause")["status"] == "pausing"
 
 
 class TestResumeMusicTool:
     def test_returns_resuming(self):
-        assert resume_music()["status"] == "resuming"
+        assert music(action="resume")["status"] == "resuming"
 
 
 class TestReplayMusicTool:
     def test_returns_replaying(self):
-        result = replay_music("track")
+        result = music(action="replay", name="track")
         assert result["status"] == "replaying"
         assert result["name"] == "track"
 

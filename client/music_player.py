@@ -133,6 +133,7 @@ class MusicPlayer:
     def _music_thread(self, name: str, prompt: str, bpm: int,
                       temperature: float, guidance: float) -> None:
         """Background thread: connect to Lyria, receive PCM, play audio."""
+        logger.info("Music thread started for '%s' (prompt='%s')", name, prompt)
         loop = asyncio.new_event_loop()
         try:
             self._loop = loop
@@ -146,6 +147,7 @@ class MusicPlayer:
             self._playing = False
             self._loop = None
             loop.close()
+            logger.info("Music thread ended for '%s'", name)
 
     async def _music_session(self, name: str, prompt: str, bpm: int,
                              temperature: float, guidance: float) -> None:
@@ -156,6 +158,7 @@ class MusicPlayer:
         # Lyria requires v1alpha API version — resolve API key the same
         # way genai_utils does (env vars, then llm keys).
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        logger.info("Connecting to Lyria (%s)...", LYRIA_MODEL)
         client = genai.Client(
             api_key=api_key,
             http_options={"api_version": "v1alpha"},
@@ -163,13 +166,14 @@ class MusicPlayer:
 
         async with client.aio.live.music.connect(model=LYRIA_MODEL) as session:
             self._session = session
+            logger.info("Lyria connected — configuring prompt and params")
 
             # Configure music
             await session.set_weighted_prompts(
                 prompts=[types.WeightedPrompt(text=prompt, weight=1.0)]
             )
             await session.set_music_generation_config(
-                types.MusicGenerationConfig(
+                types.LiveMusicGenerationConfig(
                     bpm=bpm,
                     temperature=temperature,
                     guidance=guidance,
@@ -179,19 +183,37 @@ class MusicPlayer:
             # Start playback
             await session.play()
             self._playing = True
+            logger.info("Lyria playing — streaming PCM for '%s'", name)
             self._notify_fn(f"Music '{name}' is now playing.")
 
             # Open PyAudio stream
             self._open_audio_stream()
 
             # Receive and play PCM chunks
+            chunks_received = 0
             try:
                 async for message in session.receive():
                     if self._stop_event.is_set():
                         break
 
-                    if hasattr(message, "data") and message.data:
-                        pcm_data = message.data
+                    sc = getattr(message, "server_content", None)
+                    if sc is None:
+                        continue
+                    audio_chunks = getattr(sc, "audio_chunks", None)
+                    if not audio_chunks:
+                        continue
+
+                    for chunk in audio_chunks:
+                        pcm_data = chunk.data
+                        if not pcm_data:
+                            continue
+                        chunks_received += 1
+                        if chunks_received == 1:
+                            logger.info(
+                                "First audio chunk received (%d bytes, mime=%s)",
+                                len(pcm_data),
+                                getattr(chunk, "mime_type", "?"),
+                            )
 
                         # Buffer for saving
                         self._pcm_buffer.extend(pcm_data)
