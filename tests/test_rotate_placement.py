@@ -19,25 +19,23 @@ class TestUnrotatePlacement:
 
     def test_rotate_90_unrotates_placement(self):
         mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, image_rotate=90)
-        # CW 90: to go back: orig_y = x, orig_x = 1000 - y
+        # CW 90 inverse: [1000-xmax, ymin, 1000-xmin, ymax]
         placement = [100, 200, 500, 600]
         result = mgr._unrotate_placement(placement)
-        # Expected: [xmin, 1000 - ymax, xmax, 1000 - ymin] = [200, 500, 600, 900]
-        assert result == [200, 500, 600, 900]
+        assert result == [400, 100, 800, 500]
 
     def test_rotate_180_unrotates(self):
         mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, image_rotate=180)
         placement = [100, 200, 500, 600]
         result = mgr._unrotate_placement(placement)
-        # [1000-ymax, 1000-xmax, 1000-ymin, 1000-xmin] = [500, 400, 900, 800]
         assert result == [500, 400, 900, 800]
 
     def test_rotate_270_unrotates(self):
         mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, image_rotate=270)
+        # CCW 90 inverse: [xmin, 1000-ymax, xmax, 1000-ymin]
         placement = [100, 200, 500, 600]
         result = mgr._unrotate_placement(placement)
-        # [1000-xmax, ymin, 1000-xmin, ymax] = [400, 100, 800, 500]
-        assert result == [400, 100, 800, 500]
+        assert result == [200, 500, 600, 900]
 
 
 class TestHandleToolResultCallsUnrotate:

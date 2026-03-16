@@ -235,17 +235,15 @@ class TestRotationRoundTrip:
         assert result == placement
 
     def test_unrotate_90_roundtrip(self):
-        """Rotate 90 CW then unrotate should return to original (approximately)."""
+        """Rotate 90 CW then unrotate should return to original exactly."""
         om = OverlayManager(H_proj=None, mode="screen", image_rotate=90)
         original = [100, 200, 800, 900]
-        # Simulate what Gemini sees after 90° CW rotation:
-        # Original (y, x) → Rotated (x, 1000-y)
-        # So Gemini coords: ymin=200, xmin=200, ymax=900, xmax=900
-        # Unrotate should give back something meaningful
-        unrotated = om._unrotate_placement([200, 200, 900, 900])
-        assert len(unrotated) == 4
-        for v in unrotated:
-            assert 0 <= v <= 1000
+        ymin, xmin, ymax, xmax = original
+        # Forward 90° CW: (y, x) → (x, 1000-y)
+        # Bbox: yr=[xmin,xmax], xr=[1000-ymax, 1000-ymin]
+        rotated = [xmin, 1000 - ymax, xmax, 1000 - ymin]
+        unrotated = om._unrotate_placement(rotated)
+        assert unrotated == original
 
     def test_unrotate_180_roundtrip(self):
         om = OverlayManager(H_proj=None, mode="screen", image_rotate=180)
@@ -256,11 +254,15 @@ class TestRotationRoundTrip:
         assert unrotated == original
 
     def test_unrotate_270_roundtrip(self):
+        """Rotate 270 CW (= 90 CCW) then unrotate should return to original exactly."""
         om = OverlayManager(H_proj=None, mode="screen", image_rotate=270)
-        unrotated = om._unrotate_placement([200, 200, 900, 900])
-        assert len(unrotated) == 4
-        for v in unrotated:
-            assert 0 <= v <= 1000
+        original = [100, 200, 800, 900]
+        ymin, xmin, ymax, xmax = original
+        # Forward 270° (= CCW 90): (y, x) → (1000-x, y)
+        # Bbox: yr=[1000-xmax, 1000-xmin], xr=[ymin, ymax]
+        rotated = [1000 - xmax, ymin, 1000 - xmin, ymax]
+        unrotated = om._unrotate_placement(rotated)
+        assert unrotated == original
 
 
 # ---------------------------------------------------------------------------

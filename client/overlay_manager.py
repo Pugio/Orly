@@ -293,15 +293,15 @@ class OverlayManager:
         ymin, xmin, ymax, xmax = placement
 
         if self.image_rotate == 90:
-            # CW 90: image (y, x) came from original (x, 1000-y)
-            # So to go back: orig_y = x, orig_x = 1000 - y
-            return [xmin, 1000 - ymax, xmax, 1000 - ymin]
+            # CW 90 forward: (y, x) → (x, 1000-y)
+            # Inverse: (yr, xr) → (y=1000-xr, x=yr)
+            return [1000 - xmax, ymin, 1000 - xmin, ymax]
         elif self.image_rotate == 180:
             return [1000 - ymax, 1000 - xmax, 1000 - ymin, 1000 - xmin]
         elif self.image_rotate == 270:
-            # CCW 90: image (y, x) came from original (1000-x, y)
-            # So to go back: orig_y = 1000 - x, orig_x = y
-            return [1000 - xmax, ymin, 1000 - xmin, ymax]
+            # CCW 90 forward: (y, x) → (1000-x, y)
+            # Inverse: (yr, xr) → (y=xr, x=1000-yr)
+            return [xmin, 1000 - ymax, xmax, 1000 - ymin]
 
         return placement
 

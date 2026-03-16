@@ -611,12 +611,11 @@ class TestUnrotatePlacement:
     def test_90_degree_unrotate(self):
         """90-degree CW rotation unrotation."""
         mgr = self._make_mgr(90)
-        # After 90 CW: image (y,x) came from original (x, 1000-y)
-        # unrotate: orig_y = xmin, orig_x = 1000 - ymax
+        # CW 90 inverse: [1000-xmax, ymin, 1000-xmin, ymax]
         placement = [100, 200, 700, 800]
         result = mgr._unrotate_placement(placement)
-        assert result == [200, 1000 - 700, 800, 1000 - 100]
-        assert result == [200, 300, 800, 900]
+        assert result == [1000 - 800, 100, 1000 - 200, 700]
+        assert result == [200, 100, 800, 700]
 
     def test_180_degree_unrotate(self):
         """180-degree rotation unrotation."""
@@ -629,10 +628,11 @@ class TestUnrotatePlacement:
     def test_270_degree_unrotate(self):
         """270-degree rotation unrotation."""
         mgr = self._make_mgr(270)
+        # CCW 90 inverse: [xmin, 1000-ymax, xmax, 1000-ymin]
         placement = [100, 200, 700, 800]
         result = mgr._unrotate_placement(placement)
-        assert result == [1000 - 800, 100, 1000 - 200, 700]
-        assert result == [200, 100, 800, 700]
+        assert result == [200, 1000 - 700, 800, 1000 - 100]
+        assert result == [200, 300, 800, 900]
 
     def test_all_rotations_preserve_area(self):
         """All rotations should preserve the area of the bounding box (in 0-1000 space)."""

@@ -319,8 +319,8 @@ class TestUnrotatePlacement:
     def test_90_rotation(self):
         om = OverlayManager(H_proj=None, mode="screen", image_rotate=90)
         result = om._unrotate_placement([100, 200, 300, 400])
-        # CW 90: [xmin, 1000 - ymax, xmax, 1000 - ymin]
-        assert result == [200, 1000 - 300, 400, 1000 - 100]
+        # CW 90 inverse: [1000-xmax, ymin, 1000-xmin, ymax]
+        assert result == [1000 - 400, 100, 1000 - 200, 300]
 
     def test_180_rotation(self):
         om = OverlayManager(H_proj=None, mode="screen", image_rotate=180)
@@ -330,7 +330,8 @@ class TestUnrotatePlacement:
     def test_270_rotation(self):
         om = OverlayManager(H_proj=None, mode="screen", image_rotate=270)
         result = om._unrotate_placement([100, 200, 300, 400])
-        assert result == [1000 - 400, 100, 1000 - 200, 300]
+        # CCW 90 inverse: [xmin, 1000-ymax, xmax, 1000-ymin]
+        assert result == [200, 1000 - 300, 400, 1000 - 100]
 
     def test_round_trip_90(self):
         """Rotating 90 then un-rotating should give back original placement."""
