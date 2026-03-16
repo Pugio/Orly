@@ -517,10 +517,16 @@ async def main(args: argparse.Namespace | None = None):
     if not args.no_audio:
         audio_capture = AudioCapture()
         audio_capture.start()
-        audio_processor = AudioProcessor()
+        proc_kwargs = {}
+        if args.noise_gate is not None:
+            proc_kwargs["noise_gate_rms"] = args.noise_gate
+        if args.echo_gate is not None:
+            proc_kwargs["echo_gate_rms"] = args.echo_gate
+        audio_processor = AudioProcessor(**proc_kwargs)
         print(
             f"[TableLight] Mic capture started "
             f"(noise_gate={audio_processor.noise_gate_rms}, "
+            f"hold={audio_processor.gate_hold_ms}ms, "
             f"echo_gate={audio_processor.echo_gate_rms})."
         )
 
@@ -768,13 +774,13 @@ def run():
         else:
             show_on_laptop(win_name, canvas)
 
-    # Install SIGINT handler: second Ctrl+C force-quits.
+    # Install SIGINT handler: second Ctrl+C force-quits immediately.
     _interrupt_count = {"n": 0}
 
     def _sigint_handler(signum, frame):
         _interrupt_count["n"] += 1
         if _interrupt_count["n"] >= 2:
-            print("\n[TableLight] Force quit.")
+            # Force quit without printing — avoid reentrant stdout writes.
             os._exit(1)
         raise KeyboardInterrupt
 
@@ -788,13 +794,21 @@ def run():
     except KeyboardInterrupt:
         print("\n[TableLight] Shutting down (Ctrl+C again to force quit)...")
     finally:
+        # Stop audio player first to prevent audio loops during teardown.
+        # The playback thread may keep writing to the speaker if not
+        # stopped before we cancel the async tasks.
+        ap = _shared_state.get("audio_player")
+        if ap is not None:
+            ap.stop()
         try:
             cv2.destroyAllWindows()
         except Exception:
             pass
+        # Cancel all async tasks and stop the event loop.
         for task in asyncio.all_tasks(loop):
             loop.call_soon_threadsafe(task.cancel)
-        async_thread.join(timeout=2)
+        loop.call_soon_threadsafe(loop.stop)
+        async_thread.join(timeout=3)
         print("[TableLight] Shutdown complete.")
         os._exit(0)
 
