@@ -189,6 +189,7 @@ def _make_mock_genai(session: MockLiveSession):
     mock_types.StartSensitivity.START_SENSITIVITY_HIGH = "HIGH"
     mock_types.StartSensitivity.START_SENSITIVITY_LOW = "LOW"
     mock_types.EndSensitivity.END_SENSITIVITY_HIGH = "HIGH"
+    mock_types.EndSensitivity.END_SENSITIVITY_LOW = "LOW"
     mock_types.ProactivityConfig = MagicMock(return_value=MagicMock())
     mock_types.ContextWindowCompressionConfig = MagicMock(return_value=MagicMock())
     mock_types.SlidingWindow = MagicMock(return_value=MagicMock())
@@ -422,8 +423,8 @@ class TestToolCallFlow:
             # Client should receive the tool_result message (JSON).
             resp = ws.receive_json(mode="text")
             assert resp["type"] == "tool_result"
-            # Translated back to legacy name for client.
-            assert resp["name"] == "project_overlay"
+            # Consolidated name sent directly to client (no translation).
+            assert resp["name"] == "overlay"
             assert resp["result"]["status"] == "displayed"
             assert resp["result"]["content_type"] == "annotation"
             # Verify args are merged into the result for client rendering.

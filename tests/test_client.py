@@ -111,8 +111,8 @@ class TestTableLightClientReceiveLoop:
         received = []
         msg = json.dumps({
             "type": "tool_result",
-            "name": "project_overlay",
-            "result": {"content_type": "graph", "title": "y=x^2"},
+            "name": "overlay",
+            "result": {"action": "create", "content_type": "graph", "title": "y=x^2"},
         })
 
         async def on_tool(name, result):
@@ -123,7 +123,7 @@ class TestTableLightClientReceiveLoop:
         await client.receive_loop()
 
         assert len(received) == 1
-        assert received[0][0] == "project_overlay"
+        assert received[0][0] == "overlay"
         assert received[0][1]["content_type"] == "graph"
 
     async def test_dispatch_transcript_in(self, client):
@@ -472,7 +472,7 @@ class TestOverlayManagerHandleToolResult:
             "data": {"text": "Hello"},
         }
         # Should not raise
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
         # Canvas should have content
         assert mgr.canvas.max() > 0
         assert mgr._has_content is True
@@ -484,4 +484,83 @@ class TestOverlayManagerHandleToolResult:
         # Should not raise for unknown tool names
         mgr.handle_tool_result("some_other_tool", {"foo": "bar"})
         assert mgr.canvas.max() == 0
+        assert mgr._has_content is False
+
+
+class TestOverlayManagerConsolidatedDispatch:
+    """Test new-style dispatch: name="overlay" with action in result."""
+
+    def test_overlay_create_renders(self):
+        from client.overlay_manager import OverlayManager
+
+        mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, mode="screen")
+        mgr.handle_tool_result("overlay", {
+            "action": "create",
+            "content_type": "annotation",
+            "placement": [100, 100, 500, 300],
+            "title": "Test",
+            "data": {"text": "Hello"},
+        })
+        assert mgr.canvas.max() > 0
+        assert mgr._has_content is True
+
+    def test_overlay_show_scene(self):
+        from client.overlay_manager import OverlayManager
+
+        mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, mode="screen")
+        # Seed a scene
+        mgr.scenes["my_scene"] = np.ones((100, 200, 3), dtype=np.uint8) * 128
+        mgr.handle_tool_result("overlay", {
+            "action": "show_scene",
+            "scene_name": "my_scene",
+            "placement": [0, 0, 1000, 1000],
+        })
+        assert mgr._has_content is True
+
+    def test_overlay_error_result_ignored(self):
+        from client.overlay_manager import OverlayManager
+
+        mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, mode="screen")
+        # Error results (e.g. invalid placement) should not crash
+        mgr.handle_tool_result("overlay", {
+            "action": "create",
+            "content_type": "annotation",
+            "placement": [],
+            "status": "error",
+            "message": "placement must have exactly 4 values, got 0.",
+        })
+        assert mgr._has_content is False
+
+    def test_overlay_remove(self):
+        from client.overlay_manager import OverlayManager
+        from client.overlay_state import OverlayStateManager
+
+        mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, mode="screen")
+        osm = OverlayStateManager(mgr)
+        mgr.overlay_state = osm
+        # Add an overlay
+        img = np.ones((50, 50, 3), dtype=np.uint8) * 255
+        osm.add("foo", "annotation", [0, 0, 500, 500], "foo", {}, img)
+        assert "foo" in osm.list_names()
+        # Remove via tool result
+        mgr.handle_tool_result("overlay", {
+            "action": "remove",
+            "overlay_name": "foo",
+        })
+        assert "foo" not in osm.list_names()
+
+    def test_overlay_clear(self):
+        from client.overlay_manager import OverlayManager
+        from client.overlay_state import OverlayStateManager
+
+        mgr = OverlayManager(H_proj=None, proj_width=1280, proj_height=720, mode="screen")
+        osm = OverlayStateManager(mgr)
+        mgr.overlay_state = osm
+        # Add overlays
+        img = np.ones((50, 50, 3), dtype=np.uint8) * 255
+        osm.add("a", "annotation", [0, 0, 500, 500], "a", {}, img)
+        osm.add("b", "annotation", [500, 500, 1000, 1000], "b", {}, img)
+        # Clear via tool result
+        mgr.handle_tool_result("overlay", {"action": "clear"})
+        assert osm.list_names() == []
         assert mgr._has_content is False

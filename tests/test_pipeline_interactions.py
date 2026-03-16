@@ -82,7 +82,7 @@ class PipelineHarness:
         """Simulate an async image completing. Checks generation_id."""
         if self._async_gen_id is not None and self._async_gen_id == self.om._generation_id:
             img = _make_overlay_img(brightness=255)
-            self.om._show_overlay(img, [0, 0, 500, 500], "image")
+            self.om._show_overlay(img, [0, 0, 500, 500])
             self.osm.add("async_img", "image", [0, 0, 500, 500], "async", {}, img,
                          recomposite=False)
             self._expected_overlays.add("async_img")

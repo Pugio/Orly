@@ -9,8 +9,8 @@ import json
 import pytest
 
 from backend.main import execute_tool, parse_text_message
-from backend.tools import (
-    get_overlay_state,
+from backend.tools import overlay, query
+from backend.tools_roadmap import (
     list_programs,
     run_program,
     stop_program,
@@ -85,7 +85,7 @@ class TestFormatProgramMessages:
 
 
 # ---------------------------------------------------------------------------
-# Tool functions
+# Tool functions (roadmap tools imported from tools_roadmap)
 # ---------------------------------------------------------------------------
 
 
@@ -124,66 +124,70 @@ class TestListProgramsTool:
 
 class TestGetOverlayStateTool:
     def test_returns_correct_structure(self):
-        result = get_overlay_state()
+        result = query(target="overlay_state")
         assert result["status"] == "fetching"
         assert "description" in result
 
 
 # ---------------------------------------------------------------------------
-# Tool declarations and registry include new tools
+# Tool declarations and registry include consolidated tools
 # ---------------------------------------------------------------------------
 
 
 class TestToolDeclarationsIncludeNewTools:
-    def test_tool_declarations_include_new_tools(self):
+    def test_tool_declarations_include_consolidated_tools(self):
         from backend.agent import TOOL_DECLARATIONS
 
         names = {d["name"] for d in TOOL_DECLARATIONS}
-        assert "run_program" in names
-        assert "stop_program" in names
-        assert "list_programs" in names
-        assert "get_overlay_state" in names
+        assert "overlay" in names
+        assert "query" in names
+        assert "music" in names
+        assert len(names) == 3
 
-    def test_tool_registry_includes_new_tools(self):
+    def test_tool_registry_includes_consolidated_tools(self):
         from backend.agent import TOOL_REGISTRY
 
-        assert "run_program" in TOOL_REGISTRY
-        assert "stop_program" in TOOL_REGISTRY
-        assert "list_programs" in TOOL_REGISTRY
-        assert "get_overlay_state" in TOOL_REGISTRY
+        assert "overlay" in TOOL_REGISTRY
+        assert "query" in TOOL_REGISTRY
+        assert "music" in TOOL_REGISTRY
+        assert len(TOOL_REGISTRY) == 3
 
 
 # ---------------------------------------------------------------------------
-# execute_tool with new tools
+# execute_tool with consolidated tools
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteRunProgram:
-    def test_execute_run_program(self):
+class TestExecuteConsolidatedTools:
+    def test_execute_overlay_create(self):
         from backend.agent import TOOL_REGISTRY
 
         result = execute_tool(
-            "run_program",
-            {"name": "tracker", "code": "print('hi')", "description": "test"},
+            "overlay",
+            {"action": "create", "content_type": "annotation",
+             "placement": [100, 100, 500, 500], "title": "test", "data": {"text": "hi"}},
             TOOL_REGISTRY,
         )
-        assert result["status"] == "started"
-        assert result["name"] == "tracker"
+        assert result["status"] == "displayed"
 
-    def test_execute_stop_program(self):
+    def test_execute_overlay_advance_step(self):
         from backend.agent import TOOL_REGISTRY
 
-        result = execute_tool("stop_program", {"name": "tracker"}, TOOL_REGISTRY)
-        assert result["status"] == "stopping"
+        result = execute_tool(
+            "overlay",
+            {"action": "advance_step", "overlay_name": "steps-1", "step_number": 2},
+            TOOL_REGISTRY,
+        )
+        assert result["status"] == "advancing"
 
-    def test_execute_list_programs(self):
+    def test_execute_query_overlay_state(self):
         from backend.agent import TOOL_REGISTRY
 
-        result = execute_tool("list_programs", {}, TOOL_REGISTRY)
+        result = execute_tool("query", {"target": "overlay_state"}, TOOL_REGISTRY)
         assert result["status"] == "fetching"
 
-    def test_execute_get_overlay_state(self):
+    def test_execute_query_fresh_view(self):
         from backend.agent import TOOL_REGISTRY
 
-        result = execute_tool("get_overlay_state", {}, TOOL_REGISTRY)
-        assert result["status"] == "fetching"
+        result = execute_tool("query", {"target": "fresh_view", "reason": "check"}, TOOL_REGISTRY)
+        assert result["status"] == "refreshing"

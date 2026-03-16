@@ -1,25 +1,26 @@
 """Tests for the refresh_view tool and image generation with camera reference."""
 
-from backend.tools import project_overlay, refresh_view
+from backend.tools import overlay, query
 
 
 class TestRefreshViewTool:
     def test_returns_success(self):
-        result = refresh_view(reason="check work")
+        result = query(target="fresh_view", reason="check work")
         assert result["status"] == "refreshing"
 
     def test_returns_description(self):
-        result = refresh_view(reason="verify position")
+        result = query(target="fresh_view", reason="verify position")
         assert "description" in result
 
     def test_includes_reason(self):
-        result = refresh_view(reason="student wrote something")
+        result = query(target="fresh_view", reason="student wrote something")
         assert result["reason"] == "student wrote something"
 
 
 class TestProjectOverlayImageWithView:
     def test_include_view_accepted(self):
-        result = project_overlay(
+        result = overlay(
+            action="create",
             content_type="image",
             placement=[100, 100, 600, 600],
             title="Test",
