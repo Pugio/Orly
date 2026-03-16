@@ -145,9 +145,9 @@ class TestFormatToolResult:
 
     def test_structure(self):
         response = {"status": "displayed", "content_type": "graph"}
-        result = format_tool_result("project_overlay", response)
+        result = format_tool_result("overlay", response)
         assert result["type"] == "tool_result"
-        assert result["name"] == "project_overlay"
+        assert result["name"] == "overlay"
         assert result["result"] == response
 
 
@@ -283,31 +283,28 @@ class TestFunctionToDeclaration:
         decl = function_to_declaration(baz)
         assert decl["parameters"]["required"] == ["name"]
 
-    def test_project_overlay_declaration(self):
-        """Verify the actual project_overlay tool produces a valid schema."""
+    def test_overlay_declaration(self):
+        """Verify the actual overlay tool produces a valid schema."""
         from backend.agent import TOOL_DECLARATIONS
 
         overlay_decl = next(
-            d for d in TOOL_DECLARATIONS if d["name"] == "project_overlay"
+            d for d in TOOL_DECLARATIONS if d["name"] == "overlay"
         )
         assert "placement" in overlay_decl["parameters"]["properties"]
         assert "content_type" in overlay_decl["parameters"]["properties"]
+        assert "action" in overlay_decl["parameters"]["properties"]
         assert overlay_decl["parameters"]["properties"]["placement"]["type"] == "ARRAY"
-        assert set(overlay_decl["parameters"]["required"]) == {
-            "content_type",
-            "placement",
-            "title",
-            "data",
-        }
+        assert overlay_decl["parameters"]["required"] == ["action"]
 
     def test_tool_registry_has_all_tools(self):
         from backend.agent import TOOL_DECLARATIONS, TOOL_REGISTRY
 
         decl_names = {d["name"] for d in TOOL_DECLARATIONS}
         assert decl_names == set(TOOL_REGISTRY.keys())
-        assert "project_overlay" in decl_names
-        assert "refresh_view" in decl_names
-        assert "show_scene" in decl_names
+        assert "overlay" in decl_names
+        assert "query" in decl_names
+        assert "music" in decl_names
+        assert len(decl_names) == 3
 
 
 # ---------------------------------------------------------------------------

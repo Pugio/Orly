@@ -58,7 +58,7 @@ def _make_config(*, with_tools: bool = False):
     tools_arg = []
     if with_tools:
         tools_arg = [{"function_declarations": [{
-            "name": "project_overlay",
+            "name": "overlay",
             "description": "Display an overlay on the table.",
             "parameters": {
                 "type": "OBJECT",
@@ -84,8 +84,8 @@ def _make_config(*, with_tools: bool = False):
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(
                 disabled=False,
-                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
+                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
                 prefix_padding_ms=100,
                 silence_duration_ms=500,
             )

@@ -192,7 +192,7 @@ class TestAsyncImageAfterInterrupt:
         """Direct _show_overlay without interruption still works normally."""
         om = make_overlay_manager()
         late_image = np.ones((50, 50, 3), dtype=np.uint8) * 255
-        om._show_overlay(late_image, [0, 0, 500, 500], "image")
+        om._show_overlay(late_image, [0, 0, 500, 500])
         assert om._has_content is True
         assert om.canvas.sum() > 0
 
