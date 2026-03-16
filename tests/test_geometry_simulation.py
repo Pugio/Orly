@@ -665,8 +665,13 @@ class TestUnrotatePlacement:
 class TestProjectorModeOrientations:
     """Test OverlayManager with mode='projector' and various H_proj."""
 
-    def test_projector_mode_180_flip(self):
-        """Projector mode applies 180-degree flip to overlays."""
+    def test_projector_mode_flips_180(self):
+        """Projector mode applies a 180° flip via orient_overlay so content
+        is readable by the human sitting opposite the projector.
+
+        A bright top-left corner in the overlay should end up in the
+        bottom-right area of the canvas after the flip.
+        """
         proj_w, proj_h = 640, 480
         H = _identity_H_proj(proj_w, proj_h)
         mgr = OverlayManager(H, proj_w, proj_h, mode="projector")
@@ -675,30 +680,27 @@ class TestProjectorModeOrientations:
         overlay = np.zeros((100, 100, 3), dtype=np.uint8)
         overlay[0:30, 0:30] = [0, 255, 255]  # yellow top-left
 
-        # The _show_overlay method flips 180, so what was top-left becomes bottom-right
-        mgr._show_overlay(overlay, [0, 0, 1000, 1000], "annotation")
+        mgr._show_overlay(overlay, [0, 0, 1000, 1000])
         canvas = mgr.canvas
 
-        # After 180 flip + placement at full canvas, the yellow should
-        # be in the bottom-right area of the projector canvas
+        # With 180° flip, yellow should move to the bottom-right area
         top_left_sum = canvas[0:proj_h // 4, 0:proj_w // 4].sum()
         bottom_right_sum = canvas[3 * proj_h // 4:, 3 * proj_w // 4:].sum()
         assert bottom_right_sum > top_left_sum, (
-            "After 180 flip, content should be in bottom-right"
+            "Projector mode flips 180°: content should move to bottom-right"
         )
 
-    def test_projector_mode_highlight_no_flip(self):
-        """Highlights are NOT flipped in projector mode."""
+    def test_projector_mode_highlight_flips(self):
+        """Highlights ARE flipped 180° in projector mode (same as all overlay types)."""
         proj_w, proj_h = 640, 480
         H = _identity_H_proj(proj_w, proj_h)
         mgr = OverlayManager(H, proj_w, proj_h, mode="projector")
 
-        # For highlights, the 180 flip is skipped
         overlay = np.zeros((100, 100, 3), dtype=np.uint8)
         overlay[0:30, 0:30] = [0, 255, 255]
 
-        mgr._show_overlay(overlay, [0, 0, 500, 500], "highlight")
-        # Just verify it doesn't crash and produces content
+        mgr._show_overlay(overlay, [0, 0, 500, 500])
+        # Verify it produces content and the flip is applied
         assert mgr.canvas.sum() > 0
 
     def test_white_bg_mode(self):
@@ -763,7 +765,7 @@ class TestEndToEndRendering:
             "title": "Test",
             "data": {"text": "Hello World"},
         }
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
 
         canvas = mgr.canvas
         # Center region should have content
@@ -788,7 +790,7 @@ class TestEndToEndRendering:
             "title": "",
             "data": {"color": "#ff0000"},
         }
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
         canvas = mgr.canvas
 
         # Top-left quadrant should have content
@@ -810,7 +812,7 @@ class TestEndToEndRendering:
             "title": "",
             "data": {"text": "# Hello\n\nThis is a test"},
         }
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
         canvas = mgr.canvas
         assert canvas.sum() > 0, "Markdown should render visible text"
 
@@ -849,7 +851,7 @@ class TestEndToEndRendering:
             "title": "",
             "data": {"text": "Hello"},
         }
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
         assert mgr.canvas.sum() > 0
 
         mgr.clear()
@@ -903,7 +905,7 @@ class TestStress:
                 "title": f"Frame {i}",
                 "data": {"text": f"Overlay {i}"},
             }
-            mgr.handle_tool_result("project_overlay", result)
+            mgr.handle_tool_result("overlay", {"action": "create", **result})
             assert mgr.canvas.sum() > 0
 
         mgr.clear()
@@ -938,7 +940,7 @@ class TestStress:
             "title": "",
             "data": {"text": "Hello"},
         }
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
         content_sum = mgr.canvas.sum()
         assert content_sum > 0
 

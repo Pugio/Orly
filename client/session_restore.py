@@ -31,7 +31,8 @@ def restore_session_state(session_store, overlay_manager) -> int:
             img = session_store.load_image(name)
             if img is not None:
                 overlay_manager.scenes[title] = img
-                overlay_manager._show_overlay(img, placement, content_type)
+                # Images were already oriented before being saved to disk.
+                overlay_manager._show_preoriented(img, placement)
                 restored += 1
         else:
             # Render and place directly — don't go through handle_tool_result
@@ -39,7 +40,8 @@ def restore_session_state(session_store, overlay_manager) -> int:
             # and handle_tool_result would double-apply _unrotate_placement.
             overlay = overlay_manager.render_overlay(
                 content_type, placement, title, data)
-            overlay_manager._show_overlay(overlay, placement, content_type)
+            # _show_overlay orients automatically.
+            overlay_manager._show_overlay(overlay, placement)
             restored += 1
 
     # Restore scene order

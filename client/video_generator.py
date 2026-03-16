@@ -42,7 +42,7 @@ class VideoGenerator:
         loading = render_video_loading(
             {"prompt": prompt, "duration": duration}, w, h, name
         )
-        self._om._show_overlay(loading, placement, "video")
+        self._om._show_overlay(loading, placement)
         logger.info("Video generation started: '%s'", name)
 
         thread = threading.Thread(

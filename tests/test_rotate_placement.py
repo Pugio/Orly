@@ -105,7 +105,7 @@ class TestHandleToolResultCallsUnrotate:
             "title": "test",
             "data": {"text": "hello"},
         }
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
         assert len(called_with) == 1, "_unrotate_placement must be called"
 
     def test_rotate_0_still_calls_unrotate(self):
@@ -121,5 +121,5 @@ class TestHandleToolResultCallsUnrotate:
             "title": "test",
             "data": {"text": "hello"},
         }
-        mgr.handle_tool_result("project_overlay", result)
+        mgr.handle_tool_result("overlay", {"action": "create", **result})
         assert len(called) == 1

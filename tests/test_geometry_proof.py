@@ -12,7 +12,7 @@ can't distinguish between correct code and several classes of bugs.
 Transformation inventory:
   T1: _unrotate_placement        — covered by roundtrip tests elsewhere
   T2: render_overlay size        — THIS FILE: aspect ratio test
-  T3: _show_overlay 180° flip   — THIS FILE: flip direction + integration
+  T3: _show_overlay orientation  — THIS FILE: no manual flip (H_proj handles it)
   T4: place_on_canvas axis swap — THIS FILE: non-square asymmetric placement
   T5: perspectiveTransform       — covered by calibration H tests elsewhere
   T6: getPerspectiveTransform    — THIS FILE: full-pipeline orientation
@@ -80,17 +80,16 @@ class TestRenderOverlaySizeComputation:
 
 
 # ---------------------------------------------------------------------------
-# T3: _show_overlay 180° flip — verify direction and type exemption
+# T3: _show_overlay orientation — verify NO manual flip is applied
 # ---------------------------------------------------------------------------
 
 
 class TestShowOverlayFlip:
-    """The 180° flip is applied to overlay content in projector mode.
-    Verify:
-    - It IS a 180° rotation (not 90° or a reflection)
-    - It IS applied for non-highlight types
-    - It is NOT applied for highlight type
-    - It is NOT applied in screen mode
+    """Verify that _show_overlay applies orient_overlay correctly.
+
+    With rotate=0 (default for these tests), orient_overlay is a no-op
+    in screen mode. In projector mode, orient_overlay applies a 180° flip
+    so content is readable by the human sitting opposite the projector.
     """
 
     def _make_asymmetric(self, w=100, h=80):
@@ -113,40 +112,46 @@ class TestShowOverlayFlip:
         assert flipped[79, 99].sum() > 0, "180° should move (0,0) to (h-1,w-1)"
         assert flipped[0, 0].sum() == 0, "Original position should be empty"
 
-    def test_projector_mode_applies_flip(self):
-        """In projector mode, annotation overlay content should be flipped."""
+    def test_projector_mode_flips_180(self):
+        """In projector mode, orient_overlay applies a 180° flip so content
+        is readable by the human sitting opposite the projector.
+
+        A bright pixel at (0,0) in the overlay moves to (h-1, w-1) after
+        the 180° flip, then gets placed on canvas. With placement
+        [0,0,500,500] on a 500x500 canvas (table coords 0-1000), the
+        overlay occupies the top-left quarter. The flipped bright pixel
+        ends up near the bottom-right of that quarter region (~row 247,
+        col 247) rather than the top-left corner.
+        """
         mgr = OverlayManager(H_proj=None, proj_width=500, proj_height=500, mode="projector")
         overlay = self._make_asymmetric(100, 80)
-        # _show_overlay calls cv2.rotate then place_on_canvas.
-        # In screen fallback mode (H_proj=None), place_on_canvas resizes directly.
-        mgr._show_overlay(overlay, [0, 0, 500, 500], "annotation")
-        # The overlay was flipped then resized into the top-left of canvas.
-        # After flip, the bright pixel moves to bottom-right of the overlay,
-        # which maps to the bottom-right of the placement region.
+        mgr._show_overlay(overlay, [0, 0, 500, 500])
         canvas = mgr.canvas
-        # Top-left of canvas should NOT have the bright pixel
-        top_left_region = canvas[:50, :50]
-        bottom_right_region = canvas[200:, 200:]
-        assert bottom_right_region.sum() > top_left_region.sum(), \
-            "Flip should move bright pixel from top-left to bottom-right"
+        # After 180° flip, bright pixel moves from top-left to bottom-right
+        # of the placement region (0:250, 0:250). So it should NOT be in
+        # the very top-left corner, but near (247, 247).
+        assert canvas[:5, :5].sum() == 0, \
+            "Top-left corner should be empty after 180° flip"
+        assert canvas[200:250, 200:250].sum() > 0, \
+            "Projector mode flips 180°: bright pixel near bottom-right of placement region"
 
     def test_screen_mode_no_flip(self):
-        """Screen mode should NOT apply the flip."""
+        """Screen mode: no flip applied."""
         mgr = OverlayManager(H_proj=None, proj_width=500, proj_height=500, mode="screen")
         overlay = self._make_asymmetric(100, 80)
-        mgr._show_overlay(overlay, [0, 0, 500, 500], "annotation")
+        mgr._show_overlay(overlay, [0, 0, 500, 500])
         canvas = mgr.canvas
-        # Bright pixel should be in top-left (no flip)
         assert canvas[:50, :50].sum() > 0, "Screen mode: bright pixel stays in top-left"
 
-    def test_highlight_exempt_from_flip(self):
-        """Highlight type should NOT be flipped even in projector mode."""
+    def test_highlight_flips_in_projector_mode(self):
+        """Highlight type in projector mode: 180° flip is applied (same as all types).
+        Bright pixel moves from top-left to bottom-right of placement region."""
         mgr = OverlayManager(H_proj=None, proj_width=500, proj_height=500, mode="projector")
         overlay = self._make_asymmetric(100, 80)
-        mgr._show_overlay(overlay, [0, 0, 500, 500], "highlight")
+        mgr._show_overlay(overlay, [0, 0, 500, 500])
         canvas = mgr.canvas
-        # Bright pixel should be in top-left (no flip for highlight)
-        assert canvas[:50, :50].sum() > 0, "Highlight: no flip, bright pixel in top-left"
+        assert canvas[:5, :5].sum() == 0, "Highlight: top-left empty after 180° flip"
+        assert canvas[200:250, 200:250].sum() > 0, "Highlight: bright pixel near bottom-right of region"
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +222,7 @@ class TestAxisSwapWithAsymmetricPlacement:
 
 class TestFullPipelineOrientation:
     """Test the COMPLETE pipeline: handle_tool_result → _unrotate_placement →
-    render_overlay → _show_overlay (flip + warp) → canvas.
+    render_overlay → orient_overlay → place_on_canvas → canvas.
 
     This is the integration test that combines ALL transformations and verifies
     the final output with an asymmetric marker.
@@ -230,7 +235,8 @@ class TestFullPipelineOrientation:
         H = _calibration_H(proj_w, proj_h)
         mgr = OverlayManager(H_proj=H, proj_width=proj_w, proj_height=proj_h, mode="projector")
 
-        mgr.handle_tool_result("project_overlay", {
+        mgr.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "graph",
             "placement": [500, 500, 1000, 1000],
             "title": "test",
@@ -246,7 +252,8 @@ class TestFullPipelineOrientation:
         """Full handle_tool_result in screen mode: same position check."""
         mgr = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
 
-        mgr.handle_tool_result("project_overlay", {
+        mgr.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "graph",
             "placement": [500, 500, 1000, 1000],
             "title": "test",
@@ -273,7 +280,8 @@ class TestFullPipelineOrientation:
             H_proj=H, proj_width=proj_w, proj_height=proj_h,
             mode="projector", image_rotate=90,
         )
-        mgr.handle_tool_result("project_overlay", {
+        mgr.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "graph",
             "placement": gemini_placement,
             "title": "test",

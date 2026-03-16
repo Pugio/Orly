@@ -621,7 +621,8 @@ class TestEdgeCases:
             (0, 0), (1280, 0), (1280, 720), (0, 720),
         ])
         mgr = OverlayManager(H_proj=H, proj_width=proj_w, proj_height=proj_h, mode="projector")
-        mgr.handle_tool_result("project_overlay", {
+        mgr.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "annotation",
             "placement": [200, 200, 800, 800],
             "title": "test",

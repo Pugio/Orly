@@ -1,8 +1,8 @@
 """Receives tool results from the backend, renders and displays overlays.
 
 Manages a canvas (black background) that overlays are placed onto.
-In projector mode, uses H_proj to map table coordinates to projector pixels.
-In screen mode, maps Gemini's 0-1000 coordinate system directly to pixel space.
+Delegates ALL coordinate/orientation transforms to CoordinateTransform —
+the single source of truth for spatial operations.
 """
 
 import logging
@@ -13,7 +13,9 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from client.renderer.image import render_image, render_loading
+from client.animated_overlay import AnimatedOverlay
+from client.coordinate_transform import CoordinateTransform
+from client.renderer.image import render_image, render_loading_frame
 from client.renderer.registry import get as get_renderer_spec
 
 
@@ -42,14 +44,26 @@ class OverlayManager:
         self.proj_width = proj_width
         self.proj_height = proj_height
         self.mode = mode
-        self.image_rotate = image_rotate  # how the image was rotated before Gemini saw it
+        self.image_rotate = image_rotate  # kept for backward compat / tests
         self.white_bg = white_bg
         self.session_store = session_store
         self.notify_fn = notify_fn
         self.overlay_state = None  # set externally to register async image completions
+
+        # Central coordinate/orientation transform — the SINGLE authority
+        # for all spatial operations (see client/coordinate_transform.py).
+        self.transform = CoordinateTransform(
+            rotate=image_rotate,
+            H_proj=H_proj,
+            display_width=proj_width,
+            display_height=proj_height,
+            mode=mode,
+        )
+
         self.canvas = self._make_bg()
         self._has_content = False
         self._last_rendered_overlay: np.ndarray | None = None  # for overlay_state registration
+        self.animated = AnimatedOverlay(self)
         # Named scene gallery: title → BGR numpy array.
         self.scenes: dict[str, np.ndarray] = {}
         # Ordered list of scene names for "reference_previous".
@@ -64,13 +78,27 @@ class OverlayManager:
         self._generation_id: int = 0
 
     def handle_tool_result(self, name: str, result: dict):
-        """Process a tool result from the backend and render the overlay."""
-        if name == "show_scene":
-            self._handle_show_scene(result)
-            return
-        if name != "project_overlay":
-            return
+        """Process a tool result from the backend and render the overlay.
 
+        Dispatches on result["action"]: create, show_scene, remove, clear.
+        """
+        if name != "overlay":
+            return
+        if result.get("status") == "error":
+            return
+        action = result.get("action", "")
+        if action == "create":
+            self._handle_create(result)
+        elif action == "show_scene":
+            self._handle_show_scene(result)
+        elif action == "remove":
+            self._handle_remove(result)
+        elif action == "clear":
+            self._handle_clear()
+        # advance_step and flip_flashcard are handled by client/main.py
+
+    def _handle_create(self, result: dict):
+        """Handle overlay create action."""
         content_type = result.get("content_type", "annotation")
         placement = list(result.get("placement", [0, 0, 1000, 1000]))
         title = result.get("title", "")
@@ -80,15 +108,15 @@ class OverlayManager:
         placement = self.adjust_text_placement(content_type, placement)
 
         if content_type == "image":
-            # Image generation is slow — show loading placeholder immediately,
-            # then generate in a background thread and swap in the result.
-            loading = render_loading(
-                data.get("prompt", title),
-                *self._placement_pixel_size(placement),
-            )
-            loading = self._unrotate_image(loading)
-            self._show_overlay(loading, placement, content_type)
-            logger.info("Generating image at %s", placement)
+            # Image generation is slow — show animated loading indicator
+            # (water-fill rising over ~60s), then swap in the real image.
+            prompt = data.get("prompt", title)
+
+            def loading_frame(elapsed, w, h):
+                return render_loading_frame(elapsed, w, h, prompt)
+
+            self.animated.start(title, loading_frame, placement)
+            logger.info("Generating image at %s (animated loading)", placement)
             thread = threading.Thread(
                 target=self._generate_image_async,
                 args=(placement, title, data),
@@ -98,41 +126,60 @@ class OverlayManager:
             return
 
         overlay = self.render_overlay(content_type, placement, title, data)
-        # Un-rotate locally-rendered overlays (text, graphs, etc.) so they
-        # appear in the human's orientation, not the camera's.
-        overlay = self._unrotate_image(overlay)
-        self._show_overlay(overlay, placement, content_type)
-        self._last_rendered_overlay = overlay  # cached for overlay_state registration
+        self._last_rendered_overlay = self._show_overlay(overlay, placement)
         logger.info("Rendered %s at %s", content_type, placement)
 
-    def _unrotate_image(self, overlay: np.ndarray) -> np.ndarray:
-        """Un-rotate a locally-rendered overlay to match the human's viewing angle.
+    def _handle_remove(self, result: dict):
+        """Handle overlay remove action."""
+        overlay_name = result.get("overlay_name", "")
+        if self.overlay_state and overlay_name:
+            self.overlay_state.remove(overlay_name)
+            logger.info("Removed overlay '%s'", overlay_name)
 
-        Applied to text, graphs, markdown, etc. — content rendered in standard
-        orientation that must be rotated to match the canvas (camera space).
-        NOT applied to AI-generated images (those are already standard orientation).
+    def _handle_clear(self):
+        """Handle overlay clear action."""
+        if self.overlay_state:
+            self.overlay_state.clear()
+        else:
+            self.clear()
+        logger.info("Cleared all overlays")
+
+    def _show_overlay(self, overlay: np.ndarray, placement: list) -> np.ndarray:
+        """Orient overlay content and place it on the canvas.
+
+        This is the standard entry point for displaying overlays. It
+        applies orient_overlay() to rotate the content for the human's
+        viewing angle, then places it on the canvas via CoordinateTransform.
+
+        ALL new overlay content must go through this method (or
+        _show_preoriented for content that's already been oriented).
+
+        Returns the oriented overlay (for callers that need to store it).
         """
-        if self.image_rotate == 90:
-            return cv2.rotate(overlay, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        elif self.image_rotate == 180:
-            return cv2.rotate(overlay, cv2.ROTATE_180)
-        elif self.image_rotate == 270:
-            return cv2.rotate(overlay, cv2.ROTATE_90_CLOCKWISE)
-        return overlay
+        oriented = self.transform.orient_overlay(overlay)
+        self.canvas = self.place_on_canvas(oriented, placement)
+        self._has_content = True
+        return oriented
 
-    def _show_overlay(self, overlay: np.ndarray, placement: list, content_type: str):
-        """Apply projector flip and place overlay on canvas."""
-        if self.mode == "projector" and content_type != "highlight":
-            overlay = cv2.rotate(overlay, cv2.ROTATE_180)
+    def _show_preoriented(self, overlay: np.ndarray, placement: list):
+        """Place an already-oriented overlay on the canvas.
+
+        Use ONLY for content that was previously oriented and stored
+        (e.g. replaying a scene from self.scenes, restoring from session).
+        For new content, use _show_overlay() which orients automatically.
+        """
         self.canvas = self.place_on_canvas(overlay, placement)
         self._has_content = True
 
+    # Legacy aliases for backward compatibility with tests
+    def _orient_overlay(self, overlay: np.ndarray) -> np.ndarray:
+        return self.transform.orient_overlay(overlay)
+
+    _unrotate_image = _orient_overlay
+
     def _placement_pixel_size(self, placement: list) -> tuple[int, int]:
         """Return (width, height) in pixels for a placement box."""
-        y_min, x_min, y_max, x_max = placement
-        w = max(1, int((x_max - x_min) / 1000.0 * self.proj_width))
-        h = max(1, int((y_max - y_min) / 1000.0 * self.proj_height))
-        return w, h
+        return self.transform.placement_pixel_size(placement)
 
     def _generate_image_async(self, placement: list, title: str, data: dict):
         """Background thread: generate image and swap onto canvas."""
@@ -160,19 +207,24 @@ class OverlayManager:
             enhance = include_view and ref_frame is not None
             overlay = render_image(prompt, w, h, reference_frame=ref_frame, style=style, enhance=enhance)
 
-            # NOTE: Generated images are NOT un-rotated. The image gen API
-            # produces images in standard orientation from a text prompt —
-            # they don't inherit the camera rotation. Only the placement
-            # coordinates need un-rotation (handled by _unrotate_placement).
+            # Orient first, then store the oriented version.
+            # Use _show_preoriented since we orient manually for storage.
+            oriented = self.transform.orient_overlay(overlay)
 
-            # Save to scene gallery by title.
-            self.scenes[title] = overlay.copy()
+            # Save oriented image to scene gallery and session store.
+            self.scenes[title] = oriented.copy()
             if title not in self._scene_order:
                 self._scene_order.append(title)
             logger.info("Image '%s' ready (scenes: %s)", title, list(self.scenes.keys()))
 
             if self.session_store:
-                self.session_store.save_image(title, overlay)
+                self.session_store.save_image(title, oriented)
+
+            # Stop loading animation before showing the real image so
+            # the animation thread can't overwrite it on the next tick.
+            # (The finally block also calls stop() as a safety net for
+            # the failure path — stop() is idempotent.)
+            self.animated.stop(title)
 
             # If an interruption cleared the canvas while we were generating,
             # skip showing the stale image.
@@ -182,30 +234,33 @@ class OverlayManager:
                     self.notify_fn(f"Image '{title}' generated but not displayed (interrupted).")
                 return
 
-            self._show_overlay(overlay, placement, "image")
+            self._show_preoriented(oriented, placement)
 
             # Register in overlay_state (no recomposite — we just placed it).
             if self.overlay_state:
                 self.overlay_state.add(
-                    title, "image", placement, title, data, overlay,
+                    title, "image", placement, title, data, oriented,
                     recomposite=False)
 
             if self.notify_fn:
                 self.notify_fn(f"Image '{title}' is ready and displayed.")
         except Exception as e:
             logger.error("Image generation failed: %s", e)
+        finally:
+            self.animated.stop(title)
 
     def _handle_show_scene(self, result: dict):
         """Show a previously generated scene on the projector."""
         scene_name = result.get("scene_name", "")
-        placement = list(result.get("placement", [0, 0, 1000, 1000]))
+        placement = list(result.get("placement") or [0, 0, 1000, 1000])
+        placement = self._unrotate_placement(placement)
 
         if scene_name not in self.scenes:
             logger.warning("Scene '%s' not found. Available: %s", scene_name, list(self.scenes.keys()))
             return
 
         overlay = self.scenes[scene_name]
-        self._show_overlay(overlay, placement, "image")
+        self._show_preoriented(overlay, placement)
         logger.info("Showing scene '%s'", scene_name)
 
     def render_overlay(
@@ -219,7 +274,7 @@ class OverlayManager:
 
         Args:
             content_type: Any registered renderer name (see client/renderer/registry.py).
-            placement: [ymin, xmin, ymax, xmax] in Gemini 0-1000 coords.
+            placement: [ymin, xmin, ymax, xmax] in table 0-1000 coords.
             title: Title text (used as prefix for annotations).
             data: Type-specific data dict.
 
@@ -227,7 +282,6 @@ class OverlayManager:
             Rendered overlay as BGR numpy array (black background).
         """
         # Compute overlay dimensions from placement
-        # Gemini returns [ymin, xmin, ymax, xmax]
         y_min, x_min, y_max, x_max = placement
         w_frac = (x_max - x_min) / 1000.0
         h_frac = (y_max - y_min) / 1000.0
@@ -248,97 +302,20 @@ class OverlayManager:
     ) -> np.ndarray:
         """Place overlay on the projector/screen canvas at the given table coordinates.
 
-        In screen mode: maps Gemini 0-1000 coords directly to pixel coordinates.
-        In projector mode: uses H_proj to map table coords to projector pixels.
+        Delegates to CoordinateTransform.place_on_canvas() for all spatial mapping.
 
         Returns updated canvas.
         """
-        canvas = self.canvas.copy()
-        # Gemini returns [ymin, xmin, ymax, xmax]
-        y_min, x_min, y_max, x_max = placement
-
-        use_direct = True  # default to direct screen mapping
-
-        if self.mode == "projector" and self.H_proj is not None:
-            # Placement is [y,x] but H_proj was calibrated with (x,y) input.
-            # Swap columns to match calibration convention.
-            src_corners = np.array([
-                [x_min, y_min],
-                [x_min, y_max],
-                [x_max, y_max],
-                [x_max, y_min],
-            ], dtype=np.float64).reshape(1, 4, 2)
-            dst_corners = cv2.perspectiveTransform(src_corners, self.H_proj)
-            dst_corners = dst_corners.reshape(4, 2)
-
-            # H_proj output: column 0 = projector x, column 1 = projector y.
-            # Use perspective warp instead of bounding-box resize to
-            # preserve perspective correction for off-axis projectors.
-            oh, ow = overlay.shape[:2]
-            # Must match src_corners order: TL, BL, BR, TR
-            overlay_corners = np.array(
-                [[0, 0], [0, oh], [ow, oh], [ow, 0]], dtype=np.float32
-            )
-            # dst_corners columns: 0=px, 1=py → getPerspectiveTransform wants (x,y)
-            dst_xy = dst_corners.astype(np.float32)
-            M = cv2.getPerspectiveTransform(overlay_corners, dst_xy)
-            warped = cv2.warpPerspective(
-                overlay, M, (self.proj_width, self.proj_height)
-            )
-            # Composite: non-black warped pixels onto canvas
-            threshold = 30 if self.white_bg else 0
-            mask = warped.sum(axis=2) > threshold
-            canvas[mask] = warped[mask]
-            use_direct = False
-
-        if use_direct:
-            px_min = max(0, int(x_min / 1000.0 * self.proj_width))
-            py_min = max(0, int(y_min / 1000.0 * self.proj_height))
-            px_max = min(self.proj_width, int(x_max / 1000.0 * self.proj_width))
-            py_max = min(self.proj_height, int(y_max / 1000.0 * self.proj_height))
-
-            if px_max > px_min and py_max > py_min:
-                resized = cv2.resize(overlay, (px_max - px_min, py_max - py_min))
-                self._composite(canvas, resized, py_min, py_max, px_min, px_max)
-
-        return canvas
-
-    def _composite(self, canvas: np.ndarray, overlay: np.ndarray,
-                   y1: int, y2: int, x1: int, x2: int) -> None:
-        """Place overlay onto canvas region, handling white background mode.
-
-        With black bg: direct overwrite (black is transparent to projector).
-        With white bg: only overwrite pixels where overlay has content
-        (non-black), so white background shows through elsewhere.
-        """
-        if self.white_bg:
-            mask = overlay.sum(axis=2) > 30  # non-black content
-            region = canvas[y1:y2, x1:x2]
-            region[mask] = overlay[mask]
-        else:
-            canvas[y1:y2, x1:x2] = overlay
+        return self.transform.place_on_canvas(
+            self.canvas, overlay, placement, white_bg=self.white_bg
+        )
 
     def _unrotate_placement(self, placement: list) -> list:
-        """Un-rotate Gemini coordinates from rotated image back to marker space.
+        """Un-rotate Gemini coordinates from rotated image back to table space.
 
-        Gemini returns [ymin, xmin, ymax, xmax] in 0-1000 of the image it saw.
-        If the image was rotated CW by N degrees before Gemini saw it,
-        we reverse that rotation on the coordinates.
+        Delegates to CoordinateTransform.gemini_to_table().
         """
-        ymin, xmin, ymax, xmax = placement
-
-        if self.image_rotate == 90:
-            # CW 90 forward: (y, x) → (x, 1000-y)
-            # Inverse: (yr, xr) → (y=1000-xr, x=yr)
-            return [1000 - xmax, ymin, 1000 - xmin, ymax]
-        elif self.image_rotate == 180:
-            return [1000 - ymax, 1000 - xmax, 1000 - ymin, 1000 - xmin]
-        elif self.image_rotate == 270:
-            # CCW 90 forward: (y, x) → (1000-x, y)
-            # Inverse: (yr, xr) → (y=xr, x=1000-yr)
-            return [xmin, 1000 - ymax, xmax, 1000 - ymin]
-
-        return placement
+        return self.transform.gemini_to_table(placement)
 
     @staticmethod
     def adjust_text_placement(content_type: str, placement: list) -> list:
@@ -391,8 +368,10 @@ class OverlayManager:
         """Clear all overlays (reset canvas to background).
 
         Also cancels any in-flight refresh cycle so complete_refresh()
-        doesn't restore a stale pre-interrupt canvas.
+        doesn't restore a stale pre-interrupt canvas, and stops all
+        running animations (loading indicators, etc.).
         """
+        self.animated.stop_all()
         self.canvas = self._make_bg()
         self._has_content = False
         self._refresh_requested = False

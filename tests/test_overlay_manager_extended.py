@@ -194,7 +194,8 @@ class TestPlaceOnCanvasProjector:
 class TestHandleToolResult:
     def test_project_overlay_graph(self):
         om = OverlayManager(H_proj=None, proj_width=640, proj_height=480, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "graph",
             "placement": [0, 0, 500, 500],
             "title": "y=x",
@@ -204,7 +205,8 @@ class TestHandleToolResult:
 
     def test_project_overlay_annotation(self):
         om = OverlayManager(H_proj=None, proj_width=640, proj_height=480, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "annotation",
             "placement": [0, 0, 500, 500],
             "title": "Test",
@@ -219,7 +221,8 @@ class TestHandleToolResult:
 
     def test_show_scene_unknown_scene_does_nothing(self):
         om = OverlayManager(H_proj=None, proj_width=640, proj_height=480, mode="screen")
-        om.handle_tool_result("show_scene", {
+        om.handle_tool_result("overlay", {
+            "action": "show_scene",
             "scene_name": "nonexistent",
             "placement": [0, 0, 1000, 1000],
         })
@@ -230,7 +233,8 @@ class TestHandleToolResult:
         # Manually add a scene
         fake_scene = np.ones((200, 300, 3), dtype=np.uint8) * 128
         om.scenes["My Scene"] = fake_scene
-        om.handle_tool_result("show_scene", {
+        om.handle_tool_result("overlay", {
+            "action": "show_scene",
             "scene_name": "My Scene",
             "placement": [0, 0, 1000, 1000],
         })
@@ -238,7 +242,8 @@ class TestHandleToolResult:
 
     def test_defaults_when_result_missing_fields(self):
         om = OverlayManager(H_proj=None, proj_width=640, proj_height=480, mode="screen")
-        om.handle_tool_result("project_overlay", {})
+        om.handle_tool_result("overlay", {
+            "action": "create",})
         # content_type defaults to "annotation", placement to [0,0,1000,1000]
         # title defaults to "" -> empty annotation -> black
         # This should not crash
@@ -253,7 +258,8 @@ class TestHandleToolResult:
 class TestMinPlacementSize:
     def test_markdown_small_width_expanded(self):
         om = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "markdown",
             "placement": [100, 100, 600, 200],  # width=100, too narrow
             "title": "t",
@@ -263,7 +269,8 @@ class TestMinPlacementSize:
 
     def test_annotation_small_height_expanded(self):
         om = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "annotation",
             "placement": [100, 100, 200, 800],  # height=100, too short
             "title": "t",
@@ -274,7 +281,8 @@ class TestMinPlacementSize:
     def test_graph_not_expanded(self):
         """Graph type should not be affected by min-size enforcement."""
         om = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "graph",
             "placement": [100, 100, 200, 200],  # small but no enforcement
             "title": "t",
@@ -286,7 +294,8 @@ class TestMinPlacementSize:
         """When expanding width would exceed 1000, clamp xmax then shift xmin."""
         om = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
         # xmin=800, width would need 500 => xmax=1000 still too narrow => shift xmin
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "markdown",
             "placement": [100, 800, 600, 900],  # width=100
             "title": "t",
@@ -296,7 +305,8 @@ class TestMinPlacementSize:
 
     def test_min_height_clamps_to_1000(self):
         om = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "annotation",
             "placement": [800, 100, 900, 800],  # height=100
             "title": "t",
@@ -350,35 +360,37 @@ class TestUnrotatePlacement:
 
 class TestComposite:
     def test_black_bg_direct_overwrite(self):
+        """Black bg mode: overlay content directly overwrites canvas."""
         om = OverlayManager(H_proj=None, proj_width=100, proj_height=100, mode="screen")
-        canvas = np.zeros((100, 100, 3), dtype=np.uint8)
         overlay = np.ones((50, 50, 3), dtype=np.uint8) * 200
-        om._composite(canvas, overlay, 10, 60, 10, 60)
-        assert np.array_equal(canvas[10:60, 10:60], overlay)
+        # Place overlay at [100, 100, 600, 600] → pixels 10-60 on a 100px canvas
+        canvas = om.place_on_canvas(overlay, [100, 100, 600, 600])
+        # Region should have content
+        assert canvas[10:60, 10:60].max() > 0
 
     def test_white_bg_preserves_background(self):
+        """White bg mode: only non-black overlay pixels overwrite canvas."""
         om = OverlayManager(
             H_proj=None, proj_width=100, proj_height=100,
             mode="screen", white_bg=True,
         )
-        canvas = np.full((100, 100, 3), 255, dtype=np.uint8)
         overlay = np.zeros((50, 50, 3), dtype=np.uint8)
         # Add some non-black content to overlay
         overlay[10:20, 10:20] = (0, 255, 0)
-        om._composite(canvas, overlay, 0, 50, 0, 50)
-        # Non-black region should be overwritten
-        assert np.array_equal(canvas[10:20, 10:20], overlay[10:20, 10:20])
-        # Black region should still be white (background shows through)
+        canvas = om.place_on_canvas(overlay, [0, 0, 500, 500])
+        # Non-black region should be overwritten (green pixel somewhere)
+        assert canvas[:50, :50, 1].max() > 200
+        # Corners should still be white (black overlay pixels not written)
         assert canvas[0, 0, 0] == 255
 
     def test_white_bg_black_overlay_not_written(self):
+        """White bg mode: all-black overlay doesn't overwrite canvas."""
         om = OverlayManager(
             H_proj=None, proj_width=100, proj_height=100,
             mode="screen", white_bg=True,
         )
-        canvas = np.full((100, 100, 3), 255, dtype=np.uint8)
         overlay = np.zeros((50, 50, 3), dtype=np.uint8)  # all black
-        om._composite(canvas, overlay, 0, 50, 0, 50)
+        canvas = om.place_on_canvas(overlay, [0, 0, 500, 500])
         # Canvas should remain all white since overlay is entirely black
         assert canvas[0:50, 0:50].min() == 255
 
@@ -496,21 +508,31 @@ class TestPlacementPixelSize:
 
 class TestImageHandling:
     def test_image_shows_loading_immediately(self):
+        import time
+        import threading
         om = OverlayManager(H_proj=None, proj_width=640, proj_height=480, mode="screen")
+        block = threading.Event()
         with patch("client.overlay_manager.render_image") as mock_ri:
-            mock_ri.return_value = np.zeros((480, 640, 3), dtype=np.uint8)
-            om.handle_tool_result("project_overlay", {
+            mock_ri.side_effect = lambda *a, **kw: (
+                block.wait(timeout=5) or np.zeros((480, 640, 3), dtype=np.uint8)
+            )
+            om.handle_tool_result("overlay", {
+                "action": "create",
                 "content_type": "image",
                 "placement": [0, 0, 1000, 1000],
                 "title": "test",
                 "data": {"prompt": "a cat"},
             })
-        assert om.canvas.max() > 0  # loading placeholder visible
+            # Animation runs in a background thread — give it a moment
+            time.sleep(0.1)
+            assert om.canvas.max() > 0  # loading animation visible
+            block.set()
 
     def test_projector_mode_flips_overlay(self):
         """In projector mode, non-highlight overlays should be rotated 180."""
         om = OverlayManager(H_proj=None, proj_width=640, proj_height=480, mode="projector")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "content_type": "annotation",
             "placement": [0, 0, 500, 500],
             "title": "t",

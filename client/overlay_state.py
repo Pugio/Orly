@@ -8,7 +8,6 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-import cv2
 import numpy as np
 
 
@@ -131,11 +130,15 @@ class OverlayStateManager:
             self._recomposite_locked()
 
     def _recomposite_locked(self) -> None:
-        """Re-render all overlays (caller must hold self._lock)."""
+        """Re-render all overlays (caller must hold self._lock).
+
+        No manual rotation/flip is applied — the overlay images stored in
+        each entry are already oriented (via CoordinateTransform.orient_overlay),
+        and place_on_canvas delegates spatial mapping to CoordinateTransform
+        which handles projector geometry via H_proj.
+        """
         self._om.canvas = self._om._make_bg()
         self._om._has_content = bool(self._overlays)
         for entry in self._overlays.values():
             overlay = entry.image.copy()
-            if self._om.mode == "projector" and entry.content_type != "highlight":
-                overlay = cv2.rotate(overlay, cv2.ROTATE_180)
             self._om.canvas = self._om.place_on_canvas(overlay, entry.placement)

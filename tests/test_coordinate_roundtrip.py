@@ -274,7 +274,8 @@ class TestEndToEndRendering:
     def test_graph_overlay_placed_correctly(self):
         """Render a graph overlay and verify it lands in the right region."""
         om = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "status": "displayed",
             "content_type": "graph",
             "placement": [0, 0, 500, 500],
@@ -291,7 +292,8 @@ class TestEndToEndRendering:
 
     def test_annotation_overlay_placed_correctly(self):
         om = OverlayManager(H_proj=None, proj_width=1000, proj_height=1000, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "status": "displayed",
             "content_type": "annotation",
             "placement": [500, 500, 1000, 1000],
@@ -305,7 +307,8 @@ class TestEndToEndRendering:
 
     def test_clear_resets_canvas(self):
         om = OverlayManager(H_proj=None, proj_width=500, proj_height=500, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "status": "displayed",
             "content_type": "annotation",
             "placement": [0, 0, 1000, 1000],
@@ -326,7 +329,8 @@ class TestStressAndEdgeCases:
     def test_large_overlay_on_small_projector(self):
         """Full-canvas overlay on 320x240 projector."""
         om = OverlayManager(H_proj=None, proj_width=320, proj_height=240, mode="screen")
-        om.handle_tool_result("project_overlay", {
+        om.handle_tool_result("overlay", {
+            "action": "create",
             "status": "displayed",
             "content_type": "annotation",
             "placement": [0, 0, 1000, 1000],
@@ -341,7 +345,8 @@ class TestStressAndEdgeCases:
         om = OverlayManager(H_proj=None, proj_width=500, proj_height=500, mode="screen")
         for i in range(10):
             y = (i * 100) % 900
-            om.handle_tool_result("project_overlay", {
+            om.handle_tool_result("overlay", {
+                "action": "create",
                 "status": "displayed",
                 "content_type": "annotation",
                 "placement": [y, 0, y + 100, 500],

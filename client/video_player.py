@@ -89,8 +89,8 @@ class VideoPlayer:
                 # Resize to overlay dimensions
                 resized = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
 
-                # Place on canvas
-                self._om._show_overlay(resized, placement, "video")
+                # _show_overlay orients and places on canvas
+                self._om._show_overlay(resized, placement)
 
                 # Wait for next frame
                 stop_event.wait(frame_delay)

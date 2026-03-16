@@ -2,14 +2,15 @@
 
 import numpy as np
 
-from backend.tools import project_overlay
+from backend.tools import overlay
 
 
 class TestProjectOverlayImageType:
     """Validate that 'image' is accepted as a content_type."""
 
     def test_image_type_accepted(self):
-        result = project_overlay(
+        result = overlay(
+            action="create",
             content_type="image",
             placement=[100, 100, 600, 600],
             title="Test image",
@@ -20,7 +21,8 @@ class TestProjectOverlayImageType:
 
     def test_image_missing_prompt_still_valid(self):
         """Tool validation doesn't check data contents — renderer handles that."""
-        result = project_overlay(
+        result = overlay(
+            action="create",
             content_type="image",
             placement=[0, 0, 500, 500],
             title="No prompt",
@@ -145,13 +147,17 @@ class TestOverlayManagerImageAsync:
             return np.zeros((480, 640, 3), dtype=np.uint8)
 
         with patch("client.overlay_manager.render_image", side_effect=slow_render):
-            om.handle_tool_result("project_overlay", {
+            om.handle_tool_result("overlay", {
+                "action": "create",
                 "content_type": "image",
                 "placement": [100, 100, 600, 600],
                 "title": "test",
                 "data": {"prompt": "a circle"},
             })
 
-            # Canvas should have the loading placeholder (not black anymore)
-            assert om.canvas.max() > 0, "Loading placeholder should be on canvas immediately"
+            # Animation runs in a background thread — give it a moment to
+            # render the first frame onto the canvas.
+            import time
+            time.sleep(0.1)
+            assert om.canvas.max() > 0, "Loading animation should be on canvas"
             block.set()  # unblock the background thread

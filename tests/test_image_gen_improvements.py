@@ -93,26 +93,26 @@ class TestOverlayManagerNewParams:
 class TestSystemPromptUpdates:
     """Tests for system prompt content additions."""
 
-    def test_system_prompt_has_interactive_programs(self):
-        """SYSTEM_PROMPT contains 'INTERACTIVE PROGRAMS'."""
-        assert "INTERACTIVE PROGRAMS" in SYSTEM_PROMPT
-
-    def test_system_prompt_has_run_program(self):
-        """SYSTEM_PROMPT mentions 'run_program'."""
-        assert "run_program" in SYSTEM_PROMPT
-
     def test_system_prompt_has_overlay_naming(self):
         """SYSTEM_PROMPT contains 'OVERLAY NAMING'."""
         assert "OVERLAY NAMING" in SYSTEM_PROMPT
 
+    def test_system_prompt_mentions_overlay_tool(self):
+        """SYSTEM_PROMPT mentions 'overlay' tool."""
+        assert "overlay" in SYSTEM_PROMPT
+
+    def test_system_prompt_mentions_query_tool(self):
+        """SYSTEM_PROMPT mentions 'query' tool."""
+        assert "query" in SYSTEM_PROMPT
+
 
 class TestToolDeclarations:
-    """Tests for new tool declarations."""
+    """Tests for consolidated tool declarations."""
 
-    def test_tool_declarations_has_new_tools(self):
-        """TOOL_DECLARATIONS includes run_program, stop_program, list_programs, get_overlay_state."""
+    def test_tool_declarations_has_consolidated_tools(self):
+        """TOOL_DECLARATIONS includes overlay, query, music."""
         tool_names = {d["name"] for d in TOOL_DECLARATIONS}
-        assert "run_program" in tool_names
-        assert "stop_program" in tool_names
-        assert "list_programs" in tool_names
-        assert "get_overlay_state" in tool_names
+        assert "overlay" in tool_names
+        assert "query" in tool_names
+        assert "music" in tool_names
+        assert len(tool_names) == 3
