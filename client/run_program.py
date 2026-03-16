@@ -107,7 +107,7 @@ def run(argv=None):
         return True
 
     try:
-        display_loop(stack, win_name="TableLight Program",
+        display_loop(stack, win_name="Orly Program",
                      feed_frames=True, alive_check=_program_alive)
     finally:
         stack.stop()

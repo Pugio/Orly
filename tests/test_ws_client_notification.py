@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from client.ws_client import TableLightClient
+from client.ws_client import OrlyClient
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ class _MockAsyncIterator:
 class TestSendNotification:
     @pytest.fixture
     def client(self):
-        c = TableLightClient("ws://localhost:8000/ws")
+        c = OrlyClient("ws://localhost:8000/ws")
         c.ws = AsyncMock()
         c.ws.closed = False
         return c
@@ -57,7 +57,7 @@ class TestSendNotification:
         assert msg["text"] == "Image ready"
 
     async def test_send_notification_when_disconnected(self):
-        c = TableLightClient("ws://localhost:8000/ws")
+        c = OrlyClient("ws://localhost:8000/ws")
         c.ws = None
         # Should not raise
         await c.send_notification("test", "hello")
@@ -70,7 +70,7 @@ class TestSendNotification:
 
 class TestReceiveToolResult:
     async def test_overlay_tool_result(self):
-        c = TableLightClient("ws://localhost:8000/ws")
+        c = OrlyClient("ws://localhost:8000/ws")
         calls = []
 
         async def on_tool(name, result):
@@ -89,7 +89,7 @@ class TestReceiveToolResult:
         assert calls[0][1]["action"] == "create"
 
     async def test_query_tool_result(self):
-        c = TableLightClient("ws://localhost:8000/ws")
+        c = OrlyClient("ws://localhost:8000/ws")
         calls = []
 
         async def on_tool(name, result):
@@ -107,7 +107,7 @@ class TestReceiveToolResult:
         assert calls[0][0] == "query"
 
     async def test_music_tool_result(self):
-        c = TableLightClient("ws://localhost:8000/ws")
+        c = OrlyClient("ws://localhost:8000/ws")
         calls = []
 
         async def on_tool(name, result):
@@ -133,7 +133,7 @@ class TestReceiveToolResult:
 class TestCallbacksNotRegistered:
     async def test_callbacks_not_registered(self):
         """Receiving tool_result without callbacks should not crash."""
-        c = TableLightClient("ws://localhost:8000/ws")
+        c = OrlyClient("ws://localhost:8000/ws")
         msgs = [
             json.dumps({"type": "tool_result", "name": "overlay", "result": {"action": "create"}}),
             json.dumps({"type": "tool_result", "name": "music", "result": {"action": "play"}}),

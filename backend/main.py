@@ -14,7 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="TableLight Backend")
+app = FastAPI(title="Orly Backend")
 
 
 # ---------------------------------------------------------------------------

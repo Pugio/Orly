@@ -1,4 +1,4 @@
-"""TableLight Paint Program — object-tracking paintbrush.
+"""Orly Paint Program — object-tracking paintbrush.
 
 Flow:
 1. Show a guide circle in the center of the projection

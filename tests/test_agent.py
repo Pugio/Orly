@@ -53,7 +53,7 @@ class TestModuleConstants:
 class TestSystemPrompt:
     def test_contains_lumi(self):
         from backend.agent import SYSTEM_PROMPT
-        assert "Lumi" in SYSTEM_PROMPT
+        assert "Orly" in SYSTEM_PROMPT
 
     def test_contains_overlay_instructions(self):
         from backend.agent import SYSTEM_PROMPT

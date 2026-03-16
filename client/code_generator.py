@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 CODE_GEN_MODEL = "gemini-3-flash-preview"
 
 CODE_GEN_SYSTEM_PROMPT = """\
-You are a Python code generator for a projected AR table called TableLight.
-You write mini-programs that run on the table and interact with the student's
+You are a Python code generator for a projected AR table called Orly.
+You write mini-programs that run on the table and interact with the user's
 physical workspace through overlays, object tracking, and sound.
 
 Your code runs in a restricted sandbox with access to the `table` API object,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generate a printable calibration mat with 4 ArUco markers at the corners.
-The markers define the table coordinate system for TableLight.
+The markers define the table coordinate system for Orly.
 
 Supports standard paper sizes (A4, US Letter, A3, Tabloid) and custom
 dimensions. Output is a PNG at the specified DPI.
@@ -143,7 +143,7 @@ def main() -> None:
     paper_names = ", ".join(PAPER_SIZES.keys())
 
     parser = argparse.ArgumentParser(
-        description="Generate a printable ArUco calibration mat for TableLight.",
+        description="Generate a printable ArUco calibration mat for Orly.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"Built-in paper sizes: {paper_names}\n\n"
                "Use --width and --height for custom dimensions (in mm).\n"

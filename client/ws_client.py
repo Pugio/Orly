@@ -11,7 +11,7 @@ PREFIX_VIDEO_IN = b"\x02"   # client -> server: JPEG video
 PREFIX_AUDIO_OUT = b"\x03"  # server -> client: PCM audio
 
 
-class TableLightClient:
+class OrlyClient:
     """WebSocket client that connects to the Cloud Run backend.
 
     Uses a binary WebSocket protocol for audio/video (1-byte type prefix
@@ -129,8 +129,8 @@ class TableLightClient:
                 if lt:
                     lt.end("ws_dispatch")
         except websockets.exceptions.ConnectionClosed as e:
-            print(f"[TableLight] Backend connection closed: {e}")
+            print(f"[Orly] Backend connection closed: {e}")
         except Exception as e:
             import traceback
-            print(f"[TableLight] Receive error: {type(e).__name__}: {e}")
+            print(f"[Orly] Receive error: {type(e).__name__}: {e}")
             traceback.print_exc()

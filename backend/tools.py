@@ -1,4 +1,4 @@
-"""Consolidated tools for the Lumi tutor agent (hackathon-stable set).
+"""Consolidated tools for the Orly agent (hackathon-stable set).
 
 Three tools cover the full demo surface:
     overlay — create/show_scene/advance/flip/remove/clear overlays

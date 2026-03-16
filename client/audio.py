@@ -1,4 +1,4 @@
-"""Mic capture + speaker playback for the TableLight edge client.
+"""Mic capture + speaker playback for the Orly edge client.
 
 Uses PyAudio for audio I/O. PyAudio may not be available in all environments
 (e.g. CI without audio hardware), so the import is wrapped in try/except.

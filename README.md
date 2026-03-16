@@ -1,15 +1,28 @@
-# TableLight
+# Orly
 
-A projected AR tutoring system. Put homework on a table, point a camera at it, and a Gemini-powered agent sees the page, hears you speak, talks back, and projects graphs, diagrams, and annotations directly onto the table through a mini projector.
+A real-time AI agent that lives on your desk. Point a camera at your table, talk naturally, and Orly sees your world, speaks back, and projects images, diagrams, music, stories, and more directly onto the physical surface through a mini projector.
 
-No screen. No headset. Output lands on the physical desk.
+Help your kid with homework. Create a story together with AI-generated illustrations. Explore the solar system projected onto your kitchen table. Generate background music while you work. No screen. No headset. Just your desk, your voice, and light.
+
+**Orly** (from **O**ve**RL**a**Y**) is a seamless blend of digital and material — powered by Gemini's Live API.
+
+## What Can Orly Do?
+
+- 📈 **Help with homework** — graph equations, explain step-by-step, highlight problems, quiz with flashcards
+- 🎨 **Create images** — ask Orly to draw anything and it appears on your table (Gemini image generation)
+- 📖 **Tell stories** — collaboratively build illustrated stories, scene by scene, projected onto the desk
+- 🎵 **Generate music** — AI-composed background music while you work or study (Google Lyria)
+- 🎬 **Generate videos** — create short videos projected onto your surface (Google Veo)
+- 🔬 **Explore subjects** — chemistry molecules, geometry constructions, historical timelines, vocabulary cards
+- 🌍 **Explore the world** — ask about anything on the table and Orly explains it with visuals
+- ✏️ **Annotate & highlight** — Orly marks up your physical materials with projected labels and regions
 
 ## How It Works
 
-1. **Camera** sees the table (via local webcam or IP Webcam phone)
-2. **Microphone** captures student speech
+1. **Camera** sees your table (via local webcam or IP Webcam phone)
+2. **Microphone** captures your voice
 3. **Backend** bridges everything to a Gemini Live API session — audio + video streamed in real time
-4. **Gemini** sees the homework, hears the student, speaks explanations, and calls tools to project overlays
+4. **Gemini** sees your surface, hears you, speaks back, and calls tools to project overlays
 5. **Projector** (or screen fallback) renders overlays onto the table via calibrated homography
 
 ## Requirements
@@ -18,7 +31,7 @@ No screen. No headset. Output lands on the physical desk.
 - [uv](https://docs.astral.sh/uv/) package manager
 - A Gemini API key (`GOOGLE_API_KEY` or `GEMINI_API_KEY`)
 - A webcam (local or IP Webcam app)
-- A mini projector (optional — screen mode works without one)
+- A mini projector (optional (highly recommended) — screen mode works without one)
 - A printed calibration mat (generated in setup)
 
 ## Setup
@@ -161,5 +174,7 @@ uv run python -m simulation.latency_benchmark
 - **Simulation** (`simulation/`) — Synthetic audio/video pipeline for testing without hardware.
 
 ## License
+
+MIT — see [LICENSE](LICENSE).
 
 Built for the [Gemini Live Agent Challenge](https://geminiliveagentchallenge.devpost.com/).

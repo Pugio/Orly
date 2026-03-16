@@ -1,1 +1,1 @@
-"""TableLight simulation harness — test the full pipeline without hardware."""
+"""Orly simulation harness — test the full pipeline without hardware."""

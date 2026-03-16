@@ -122,7 +122,7 @@ class TestGetSystemPrompt:
 
     def test_contains_lumi(self):
         prompt = get_system_prompt()
-        assert "Lumi" in prompt
+        assert "Orly" in prompt
 
 
 # ---------------------------------------------------------------------------

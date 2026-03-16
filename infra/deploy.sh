@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Deploy TableLight backend to Cloud Run.
+# Deploy Orly backend to Cloud Run.
 #
 # Required env vars:
 #   GCP_PROJECT_ID — Google Cloud project ID
 #
 # Optional env vars:
 #   GCP_REGION — deployment region (default: us-central1)
-#   SERVICE_NAME — Cloud Run service name (default: tablelight-backend)
+#   SERVICE_NAME — Cloud Run service name (default: orly-backend)
 
 set -euo pipefail
 
@@ -19,10 +19,10 @@ if [[ -z "${GCP_PROJECT_ID:-}" ]]; then
 fi
 
 REGION="${GCP_REGION:-us-central1}"
-SERVICE="${SERVICE_NAME:-tablelight-backend}"
+SERVICE="${SERVICE_NAME:-orly-backend}"
 IMAGE="gcr.io/${GCP_PROJECT_ID}/${SERVICE}"
 
-echo "=== TableLight Backend Deployment ==="
+echo "=== Orly Backend Deployment ==="
 echo "Project:  ${GCP_PROJECT_ID}"
 echo "Region:   ${REGION}"
 echo "Service:  ${SERVICE}"

@@ -1,5 +1,5 @@
 """
-TableLight edge client — connects camera, microphone, projector, and backend.
+Orly edge client — connects camera, microphone, projector, and backend.
 
 Usage:
     uv run python -m client.main --backend ws://localhost:8080/ws/session --url http://192.168.0.114:8080
@@ -39,7 +39,7 @@ from client.program_runtime import ProgramRuntime
 from client.latency_tracker import LatencyTracker
 from client.overlay_manager import OverlayManager
 from client.music_player import MusicPlayer
-from client.ws_client import TableLightClient
+from client.ws_client import OrlyClient
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ async def audio_diagnostics_loop(diag: AudioDiagnostics, interval: float = 15.0,
 # ---------------------------------------------------------------------------
 
 
-async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float,
+async def video_loop(camera: CameraCapture, client: OrlyClient, fps: float,
                      overlay_manager: OverlayManager = None,
                      program_runtime: ProgramRuntime = None,
                      latency_tracker=None,
@@ -223,7 +223,7 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 if cap_frame is not None:
                     _saved_debug_frame = True
                     cv2.imwrite("gemini_view_raw.jpg", cap_frame)
-                    print("[TableLight] Raw camera frame saved to gemini_view_raw.jpg (no markers detected)")
+                    print("[Orly] Raw camera frame saved to gemini_view_raw.jpg (no markers detected)")
             if lt:
                 lt.end("video_frame")
             await asyncio.sleep(interval)
@@ -234,7 +234,7 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
             _saved_debug_frame = True
             with open("gemini_view.jpg", "wb") as f:
                 f.write(jpeg_bytes)
-            print(f"[TableLight] Debug frame saved to gemini_view.jpg (rotate={camera.rotate})")
+            print(f"[Orly] Debug frame saved to gemini_view.jpg (rotate={camera.rotate})")
 
         # Handle refresh_view cycle.
         if overlay_manager and overlay_manager._refresh_requested:
@@ -301,7 +301,7 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
         await asyncio.sleep(interval)
 
 
-async def silence_loop(client: TableLightClient):
+async def silence_loop(client: OrlyClient):
     """Send silence chunks to keep the audio stream alive (for --no-audio mode)."""
     # 100ms of silence at 16kHz, 16-bit mono = 3200 bytes
     silence = b"\x00" * 3200
@@ -310,7 +310,7 @@ async def silence_loop(client: TableLightClient):
         await asyncio.sleep(0.1)
 
 
-async def audio_send_loop(audio_capture: AudioCapture, client: TableLightClient,
+async def audio_send_loop(audio_capture: AudioCapture, client: OrlyClient,
                           diag: AudioDiagnostics | None = None,
                           processor: AudioProcessor | None = None):
     """Send audio chunks to backend continuously.
@@ -337,7 +337,7 @@ async def audio_send_loop(audio_capture: AudioCapture, client: TableLightClient,
             await asyncio.sleep(0.01)  # tight poll for low audio latency
 
 
-async def text_input_loop(client: TableLightClient):
+async def text_input_loop(client: OrlyClient):
     """Read text from stdin and send to backend (for --no-audio testing)."""
     import threading
     import queue as queue_mod
@@ -358,7 +358,7 @@ async def text_input_loop(client: TableLightClient):
     thread = threading.Thread(target=_reader, daemon=True)
     thread.start()
 
-    print("[TableLight] Type a message and press Enter to send to Lumi.")
+    print("[Orly] Type a message and press Enter to send to Orly.")
     while True:
         # Poll the queue so asyncio cancellation works
         try:
@@ -381,7 +381,7 @@ async def text_input_loop(client: TableLightClient):
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="TableLight edge client",
+        description="Orly edge client",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -457,7 +457,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 async def main(args: argparse.Namespace | None = None):
-    """Run the TableLight edge client (async tasks only, no OpenCV)."""
+    """Run the Orly edge client (async tasks only, no OpenCV)."""
     logging.basicConfig(level=logging.INFO)
     if args is None:
         args = parse_args()
@@ -466,7 +466,7 @@ async def main(args: argparse.Namespace | None = None):
     latency_tracker = LatencyTracker() if args.debug_latency else None
     _shared_state["latency_tracker"] = latency_tracker
 
-    client = TableLightClient(args.backend, latency_tracker=latency_tracker)
+    client = OrlyClient(args.backend, latency_tracker=latency_tracker)
 
     _event_loop = asyncio.get_running_loop()
 
@@ -524,7 +524,7 @@ async def main(args: argparse.Namespace | None = None):
             proc_kwargs["echo_gate_rms"] = args.echo_gate
         audio_processor = AudioProcessor(**proc_kwargs)
         print(
-            f"[TableLight] Mic capture started "
+            f"[Orly] Mic capture started "
             f"(noise_gate={audio_processor.noise_gate_rms}, "
             f"hold={audio_processor.gate_hold_ms}ms, "
             f"echo_gate={audio_processor.echo_gate_rms})."
@@ -565,7 +565,7 @@ async def main(args: argparse.Namespace | None = None):
                                               recomposite=False)
                     except Exception:
                         pass
-                print(f"[TableLight] Overlay projected: {content_type} — {title}")
+                print(f"[Orly] Overlay projected: {content_type} — {title}")
             elif action == "advance_step" and result.get("status") == "advancing":
                 overlay_name = result.get("overlay_name", "")
                 step_number = result.get("step_number", 1)
@@ -613,19 +613,19 @@ async def main(args: argparse.Namespace | None = None):
                     result.get("name", ""), result.get("prompt", ""),
                     result.get("bpm", 120), result.get("temperature", 1.0),
                     result.get("guidance", 3.0))
-                print(f"[TableLight] Music starting: '{result.get('name', '')}'")
+                print(f"[Orly] Music starting: '{result.get('name', '')}'")
             elif action == "stop":
                 music_player.stop()
-                print("[TableLight] Music stopped.")
+                print("[Orly] Music stopped.")
             elif action == "pause":
                 music_player.pause()
-                print("[TableLight] Music paused.")
+                print("[Orly] Music paused.")
             elif action == "resume":
                 music_player.resume()
-                print("[TableLight] Music resumed.")
+                print("[Orly] Music resumed.")
             elif action == "replay":
                 music_player.replay(result.get("name", ""))
-                print(f"[TableLight] Replaying music: '{result.get('name', '')}'")
+                print(f"[Orly] Replaying music: '{result.get('name', '')}'")
 
     _last_direction = {"value": None}
 
@@ -644,7 +644,7 @@ async def main(args: argparse.Namespace | None = None):
                 audio_diag.on_transcript_out()
         # Print label on direction change, then stream text inline
         if direction != _last_direction["value"]:
-            label = "Student" if direction == "in" else "Lumi"
+            label = "Student" if direction == "in" else "Orly"
             print(f"\n[{_ts()} {label}] ", end="", flush=True)
             _last_direction["value"] = direction
         print(text, end="", flush=True)
@@ -667,9 +667,9 @@ async def main(args: argparse.Namespace | None = None):
     client.on_interrupted(on_interrupted)
 
     # --- Connect ---
-    print(f"[TableLight] Connecting to backend at {args.backend} ...")
+    print(f"[Orly] Connecting to backend at {args.backend} ...")
     await client.connect(text_only=args.no_audio)
-    print(f"[TableLight] Connected ({'text-only' if args.no_audio else 'audio'} mode).")
+    print(f"[Orly] Connected ({'text-only' if args.no_audio else 'audio'} mode).")
 
     # --- Build task list (NO display_loop — OpenCV runs on main thread) ---
     tasks = [
@@ -719,7 +719,7 @@ async def main(args: argparse.Namespace | None = None):
         await client.close()
         if audio_capture:
             audio_capture.stop()
-        print("[TableLight] Async tasks stopped.")
+        print("[Orly] Async tasks stopped.")
 
 
 def run():
@@ -733,7 +733,7 @@ def run():
     if args.mode == "projector":
         proj_width, proj_height = get_projector_resolution()
         if not verify_projector(proj_width, proj_height):
-            print("[TableLight] Aborted.")
+            print("[Orly] Aborted.")
             return
 
     # Start the async event loop in a background thread
@@ -752,7 +752,7 @@ def run():
     import time
     time.sleep(1)
 
-    win_name = "TableLight Overlay"
+    win_name = "Orly Overlay"
 
     def _alive():
         return async_thread.is_alive()
@@ -786,13 +786,13 @@ def run():
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
-    print("[TableLight] Display loop running on main thread. Press Ctrl+C to quit.")
+    print("[Orly] Display loop running on main thread. Press Ctrl+C to quit.")
     try:
         while _alive():
             _display_tick()
             cv2.waitKey(50)
     except KeyboardInterrupt:
-        print("\n[TableLight] Shutting down (Ctrl+C again to force quit)...")
+        print("\n[Orly] Shutting down (Ctrl+C again to force quit)...")
     finally:
         # Stop audio player first to prevent audio loops during teardown.
         # The playback thread may keep writing to the speaker if not
@@ -809,7 +809,7 @@ def run():
             loop.call_soon_threadsafe(task.cancel)
         loop.call_soon_threadsafe(loop.stop)
         async_thread.join(timeout=3)
-        print("[TableLight] Shutdown complete.")
+        print("[Orly] Shutdown complete.")
         os._exit(0)
 
 

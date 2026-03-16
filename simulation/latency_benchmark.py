@@ -112,7 +112,7 @@ async def run_benchmark(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="TableLight latency benchmark",
+        description="Orly latency benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(

@@ -61,10 +61,10 @@ class TestCameraLatencyInstrumentation:
 class TestWSClientLatencyInstrumentation:
     @pytest.mark.asyncio
     async def test_receive_loop_records_dispatch_latency(self):
-        """TableLightClient.receive_loop should record ws_dispatch latency."""
-        from client.ws_client import TableLightClient
+        """OrlyClient.receive_loop should record ws_dispatch latency."""
+        from client.ws_client import OrlyClient
 
-        client = TableLightClient("ws://fake", latency_tracker=LatencyTracker())
+        client = OrlyClient("ws://fake", latency_tracker=LatencyTracker())
 
         # Mock ws to yield one transcript message then close
         transcript_msg = json.dumps({"type": "transcript_out", "text": "hello"})

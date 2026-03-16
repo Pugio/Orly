@@ -15,13 +15,13 @@ from client.ws_client import PREFIX_AUDIO_IN, PREFIX_AUDIO_OUT, PREFIX_VIDEO_IN
 # ---------------------------------------------------------------------------
 
 
-class TestTableLightClientSendAudio:
+class TestOrlyClientSendAudio:
     """send_audio sends binary frame with 0x01 prefix."""
 
     @pytest.fixture
     def client(self):
-        from client.ws_client import TableLightClient
-        c = TableLightClient("ws://localhost:8000/ws")
+        from client.ws_client import OrlyClient
+        c = OrlyClient("ws://localhost:8000/ws")
         c.ws = AsyncMock()
         return c
 
@@ -39,13 +39,13 @@ class TestTableLightClientSendAudio:
         assert raw[1:] == pcm
 
 
-class TestTableLightClientSendVideo:
+class TestOrlyClientSendVideo:
     """send_video sends binary frame with 0x02 prefix."""
 
     @pytest.fixture
     def client(self):
-        from client.ws_client import TableLightClient
-        c = TableLightClient("ws://localhost:8000/ws")
+        from client.ws_client import OrlyClient
+        c = OrlyClient("ws://localhost:8000/ws")
         c.ws = AsyncMock()
         return c
 
@@ -63,13 +63,13 @@ class TestTableLightClientSendVideo:
         assert raw[1:] == jpeg
 
 
-class TestTableLightClientSendText:
+class TestOrlyClientSendText:
     """send_text sends correct JSON."""
 
     @pytest.fixture
     def client(self):
-        from client.ws_client import TableLightClient
-        c = TableLightClient("ws://localhost:8000/ws")
+        from client.ws_client import OrlyClient
+        c = OrlyClient("ws://localhost:8000/ws")
         c.ws = AsyncMock()
         return c
 
@@ -81,13 +81,13 @@ class TestTableLightClientSendText:
         assert msg["text"] == "hello"
 
 
-class TestTableLightClientReceiveLoop:
+class TestOrlyClientReceiveLoop:
     """receive_loop dispatches messages to the correct callbacks."""
 
     @pytest.fixture
     def client(self):
-        from client.ws_client import TableLightClient
-        c = TableLightClient("ws://localhost:8000/ws")
+        from client.ws_client import OrlyClient
+        c = OrlyClient("ws://localhost:8000/ws")
         return c
 
     async def test_dispatch_audio(self, client):

@@ -33,10 +33,10 @@ from client.overlay_manager import OverlayManager
 def pattern_annotation():
     """Text annotation — readable orientation check."""
     return (
-        "Annotation — 'Hello from TableLight!' (should be human-readable)",
+        "Annotation — 'Hello from Orly!' (should be human-readable)",
         "annotation",
         [200, 200, 800, 800],
-        {"text": "Hello from TableLight!"},
+        {"text": "Hello from Orly!"},
         "Hello",
     )
 

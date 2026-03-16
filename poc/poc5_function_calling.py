@@ -66,7 +66,7 @@ def get_tool_declaration() -> dict:
 
 
 def get_system_prompt() -> str:
-    """Return the Lumi tutor system prompt.
+    """Return the Orly system prompt.
 
     Reads from backend/agent.py to keep in sync. Falls back to inline
     definition if the file cannot be parsed.
@@ -85,7 +85,7 @@ def get_system_prompt() -> str:
 
     # Fallback
     return (
-        "You are a friendly, encouraging maths tutor called Lumi.\n"
+        "You are Orly, a friendly, encouraging maths tutor.\n"
         "You can see the student's work surface through a camera.\n\n"
         "BEHAVIOUR:\n"
         "- When the student asks about a problem, identify it on the surface first.\n"

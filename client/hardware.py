@@ -199,13 +199,13 @@ def verify_projector(proj_width: int, proj_height: int) -> bool:
     test_canvas = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
     cx, cy = proj_width // 2, proj_height // 2
     cv2.circle(test_canvas, (cx, cy), 80, (255, 255, 0), 3)
-    cv2.putText(test_canvas, "TableLight", (cx - 100, cy + 5),
+    cv2.putText(test_canvas, "Orly", (cx - 100, cy + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
     for x, y in [(50, 50), (proj_width - 50, 50),
                   (proj_width - 50, proj_height - 50), (50, proj_height - 50)]:
         cv2.drawMarker(test_canvas, (x, y), (0, 0, 255),
                        cv2.MARKER_CROSS, 30, 2)
-    show_on_projector("TableLight Overlay", test_canvas, fullscreen=True)
+    show_on_projector("Orly Overlay", test_canvas, fullscreen=True)
     cv2.waitKey(1)
     print("[Hardware] Do you see the test pattern on the projector? "
           "(Enter to continue, q to quit)")
@@ -216,14 +216,14 @@ def verify_projector(proj_width: int, proj_height: int) -> bool:
     print("[Hardware] Projector verified.")
     # Clear so the camera doesn't capture the test pattern
     black = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
-    show_on_projector("TableLight Overlay", black, fullscreen=True)
+    show_on_projector("Orly Overlay", black, fullscreen=True)
     cv2.waitKey(500)
     return True
 
 
 def display_loop(
     stack: HardwareStack,
-    win_name: str = "TableLight",
+    win_name: str = "Orly",
     feed_frames: bool = True,
     alive_check=None,
 ):

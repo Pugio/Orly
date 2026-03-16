@@ -1,4 +1,4 @@
-# TableLight Setup & Lessons Learned
+# Orly Setup & Lessons Learned
 
 ## Physical Setup
 

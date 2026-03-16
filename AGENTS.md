@@ -2,7 +2,9 @@
 
 ## What This Is
 
-TableLight is a projected AR tutoring system. A student puts homework on a table. A camera sees it. A Gemini Live API session hears the student and sees the table through a single streaming session. The agent speaks explanations and calls a `project_overlay` tool to physically project graphs/diagrams onto the table via a mini projector. No screen. No headset. Output lands on the physical desk.
+Orly (from OveRLaY) is a real-time AI agent that lives on your desk. A camera sees the table surface. A Gemini Live API session hears you and sees your world through a single streaming session. The agent speaks back and calls tools to physically project images, diagrams, stories, music, and more onto the table via a mini projector. No screen. No headset. Output lands on the physical desk.
+
+It's not just a tutoring system — it's a seamless blend of digital and material. Help with homework, create illustrated stories together, explore the world, generate music, or just have a conversation with an AI that can see and act in your physical space.
 
 Being built for the [Gemini Live Agent Challenge](https://geminiliveagentchallenge.devpost.com/) hackathon (Live Agents category). Full plan in `PROJECT_PLAN.md`.
 
@@ -47,7 +49,7 @@ The coordinate system is the key insight: Gemini's 0–1000 bounding boxes map d
 ## File Layout
 
 ```
-tablelight/
+orly/
 ├── CLAUDE.md              ← you are here
 ├── PROJECT_PLAN.md        ← full plan, architecture, hackathon strategy
 ├── backend/               ← Cloud Run service (FastAPI + raw GenAI SDK)

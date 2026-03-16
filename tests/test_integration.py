@@ -1,4 +1,4 @@
-"""End-to-end integration tests for the TableLight backend WebSocket flow.
+"""End-to-end integration tests for the Orly backend WebSocket flow.
 
 Uses a mock Gemini Live session so no real API calls are made.
 Tests the full pipeline: client WS -> FastAPI -> mock session -> back to client.

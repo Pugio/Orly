@@ -344,9 +344,9 @@ class TestWSClientInterruptChain:
     @pytest.mark.asyncio
     async def test_interrupted_message_triggers_callback(self):
         """The full chain: JSON {"type": "interrupted"} → callback fires."""
-        from client.ws_client import TableLightClient
+        from client.ws_client import OrlyClient
 
-        client = TableLightClient("ws://fake")
+        client = OrlyClient("ws://fake")
         interrupted_count = 0
 
         async def on_interrupted():
@@ -383,9 +383,9 @@ class TestWSClientInterruptChain:
     @pytest.mark.asyncio
     async def test_interrupted_without_callback_is_safe(self):
         """Receiving interrupted with no registered callback should not crash."""
-        from client.ws_client import TableLightClient
+        from client.ws_client import OrlyClient
 
-        client = TableLightClient("ws://fake")
+        client = OrlyClient("ws://fake")
         # Don't register on_interrupted
 
         messages = [json.dumps({"type": "interrupted"})]

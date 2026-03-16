@@ -1,7 +1,7 @@
 [project]
-name = "tablelight"
+name = "orly"
 version = "0.1.0"
-description = "Projected AR tutoring system powered by Gemini Live API"
+description = "Real-time AI agent overlay for the physical world — powered by Gemini Live API"
 requires-python = ">=3.12"
 dependencies = [
     "google-genai",

@@ -1,4 +1,4 @@
-"""Comprehensive geometric simulation tests for the TableLight coordinate pipeline.
+"""Comprehensive geometric simulation tests for the Orly coordinate pipeline.
 
 Tests the full chain: ArUco detection -> camera homography -> rectification ->
 projector homography -> overlay placement, using synthetic images and known
