@@ -54,7 +54,8 @@ logger = logging.getLogger(__name__)
 async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float,
                      overlay_manager: OverlayManager = None,
                      program_runtime: ProgramRuntime = None,
-                     latency_tracker=None):
+                     latency_tracker=None,
+                     save_frame: bool = False):
     """Capture and send video frames at the specified FPS.
 
     When overlays are active, sends the last clean frame instead of
@@ -62,10 +63,14 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
 
     When a refresh is requested, waits one frame for the projector to
     go dark, captures a fresh clean frame, then restores overlays.
+
+    When *save_frame* is True, saves the first sent frame to
+    ``gemini_view.jpg`` so you can verify what the agent sees.
     """
     interval = 1.0 / fps
     last_clean_frame = None
     refresh_wait_frames = 0  # countdown after refresh request
+    _saved_debug_frame = False
     loop = asyncio.get_running_loop()
     while True:
         lt = latency_tracker
@@ -77,11 +82,28 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
         jpeg_bytes, raw_frame, _ = await loop.run_in_executor(
             None, camera.get_rectified_frame
         )
+
         if not jpeg_bytes:
+            # No markers detected yet — save raw camera frame for debugging.
+            if save_frame and not _saved_debug_frame:
+                cap_frame = await loop.run_in_executor(
+                    None, lambda: camera.source.read() if camera.source else None
+                )
+                if cap_frame is not None:
+                    _saved_debug_frame = True
+                    cv2.imwrite("gemini_view_raw.jpg", cap_frame)
+                    print("[TableLight] Raw camera frame saved to gemini_view_raw.jpg (no markers detected)")
             if lt:
                 lt.end("video_frame")
             await asyncio.sleep(interval)
             continue
+
+        # Save the post-rotation JPEG — exactly what Gemini will see.
+        if save_frame and not _saved_debug_frame:
+            _saved_debug_frame = True
+            with open("gemini_view.jpg", "wb") as f:
+                f.write(jpeg_bytes)
+            print(f"[TableLight] Debug frame saved to gemini_view.jpg (rotate={camera.rotate})")
 
         # Handle refresh_view cycle.
         if overlay_manager and overlay_manager._refresh_requested:
@@ -135,7 +157,14 @@ async def silence_loop(client: TableLightClient):
 
 
 async def audio_send_loop(audio_capture: AudioCapture, client: TableLightClient):
-    """Send audio chunks to backend continuously."""
+    """Send audio chunks to backend continuously.
+
+    All mic audio is always forwarded to Gemini — the server-side VAD
+    needs to hear the user to detect interruptions.  Echo cancellation
+    relies on tuned VAD sensitivity (START_SENSITIVITY_LOW, longer
+    silence_duration) rather than client-side mic gating, because
+    gating prevents interruptions from working at all.
+    """
     while True:
         chunk = audio_capture.get_chunk()
         if chunk:
@@ -242,6 +271,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--debug-latency",
         action="store_true",
         help="Show live latency debug overlay on display",
+    )
+    parser.add_argument(
+        "--save-frame",
+        action="store_true",
+        help="Save the first sent frame to gemini_view.jpg for inspection",
     )
     return parser.parse_args(argv)
 
@@ -442,8 +476,13 @@ async def main(args: argparse.Namespace | None = None):
         print(text, end="", flush=True)
 
     async def on_interrupted():
-        overlay_state.clear()  # clears both state tracking and canvas
-        print("[TableLight] Interrupted — overlays cleared.")
+        # Interruptions are normal — the user spoke while the model was
+        # talking.  Do NOT clear overlays; they should persist until
+        # explicitly removed by a tool call.
+        # Clear queued audio so mic gating ends immediately — the user
+        # is speaking and we need to hear them, not play stale audio.
+        if audio_player:
+            audio_player.clear()
 
     async def on_refresh_view():
         overlay_manager.request_refresh()
@@ -563,14 +602,15 @@ async def main(args: argparse.Namespace | None = None):
 
     # --- Build task list (NO display_loop — OpenCV runs on main thread) ---
     tasks = [
-        asyncio.create_task(video_loop(camera, client, args.fps, overlay_manager, program_runtime, latency_tracker=latency_tracker), name="video"),
+        asyncio.create_task(video_loop(camera, client, args.fps, overlay_manager, program_runtime, latency_tracker=latency_tracker, save_frame=args.save_frame), name="video"),
         asyncio.create_task(client.receive_loop(), name="receive"),
     ]
 
     if audio_capture and not args.no_audio:
         tasks.append(
             asyncio.create_task(
-                audio_send_loop(audio_capture, client), name="audio_send"
+                audio_send_loop(audio_capture, client),
+                name="audio_send",
             )
         )
     else:

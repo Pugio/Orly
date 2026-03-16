@@ -119,6 +119,53 @@ def _clean_args(args: dict, func) -> dict:
     return {k: v for k, v in args.items() if k in valid}
 
 
+def _translate_tool_for_client(
+    fn_name: str, fn_args: dict, result: dict
+) -> tuple[str, dict | None]:
+    """Map consolidated tool call to the legacy name + forward message the client expects.
+
+    Returns (client_tool_name, optional_forward_message).
+    """
+    action = fn_args.get("action", "")
+
+    if fn_name == "overlay":
+        # Map action back to original per-action tool name.
+        _ACTION_TO_NAME = {
+            "create": "project_overlay",
+            "show_scene": "show_scene",
+            "advance_step": "advance_step",
+            "flip_flashcard": "flip_flashcard",
+        }
+        return _ACTION_TO_NAME.get(action, "project_overlay"), None
+
+    if fn_name == "query":
+        target = fn_args.get("target", "")
+        _TARGET_TO_NAME = {
+            "fresh_view": "refresh_view",
+            "overlay_state": "get_overlay_state",
+            "session_manifest": "get_session_manifest",
+        }
+        legacy = _TARGET_TO_NAME.get(target, "refresh_view")
+        # These query tools need a dedicated forward message for the client.
+        if legacy in ("get_overlay_state", "get_session_manifest"):
+            return legacy, {"type": legacy, **fn_args}
+        return legacy, None
+
+    if fn_name == "music":
+        _ACTION_TO_MUSIC = {
+            "play": "play_music",
+            "stop": "stop_music",
+            "pause": "pause_music",
+            "resume": "resume_music",
+            "replay": "replay_music",
+        }
+        legacy = _ACTION_TO_MUSIC.get(action, "play_music")
+        return legacy, {"type": legacy, **fn_args}
+
+    # Unknown consolidated tool — pass through.
+    return fn_name, None
+
+
 def execute_tool(function_name: str, args: dict, registry: dict,
                  latency_tracker=None) -> dict:
     """Look up and execute a tool function, returning its result dict.
@@ -221,16 +268,19 @@ async def session_endpoint(websocket: WebSocket) -> None:
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(
                 disabled=False,
-                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                # LOW sensitivity reduces false triggers from speaker echo.
+                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
                 end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                prefix_padding_ms=50,
-                silence_duration_ms=300,
+                prefix_padding_ms=100,
+                silence_duration_ms=500,
             )
         ),
         input_audio_transcription={},
         output_audio_transcription={},
     )
-    # Session resumption and context compression are Vertex AI only.
+    # Context compression, session resumption, and proactive audio
+    # are Vertex AI only. The SDK allows them through for Google AI
+    # but the server rejects them mid-session with 1008.
     if is_vertex:
         config_kwargs["context_window_compression"] = (
             types.ContextWindowCompressionConfig(
@@ -240,6 +290,9 @@ async def session_endpoint(websocket: WebSocket) -> None:
         )
         config_kwargs["session_resumption"] = (
             types.SessionResumptionConfig(transparent=True)
+        )
+        config_kwargs["proactivity"] = (
+            types.ProactivityConfig(proactive_audio=True)
         )
     config = types.LiveConnectConfig(**config_kwargs)
 
@@ -254,8 +307,11 @@ async def session_endpoint(websocket: WebSocket) -> None:
         Returns normally on clean close or go_away. Raises on crash.
         """
         resume_cfg = config
-        if is_vertex and resumption_handle["handle"]:
+        if resumption_handle["handle"]:
             # Clone config with session resumption handle for continuation.
+            sr_kwargs: dict = {"handle": resumption_handle["handle"]}
+            if is_vertex:
+                sr_kwargs["transparent"] = True
             resume_cfg = types.LiveConnectConfig(
                 response_modalities=config.response_modalities,
                 system_instruction=config.system_instruction,
@@ -265,22 +321,26 @@ async def session_endpoint(websocket: WebSocket) -> None:
                 input_audio_transcription=config.input_audio_transcription,
                 output_audio_transcription=config.output_audio_transcription,
                 context_window_compression=config.context_window_compression,
-                session_resumption=types.SessionResumptionConfig(
-                    transparent=True,
-                    handle=resumption_handle["handle"],
-                ),
+                session_resumption=types.SessionResumptionConfig(**sr_kwargs),
             )
 
         async with client.aio.live.connect(
             model=MODEL, config=resume_cfg
         ) as session:
 
+            # Gate: block realtime input while a tool call is pending.
+            # The Gemini Live API enters a blocking state during tool calls
+            # and will terminate the connection (1008 policy violation) if
+            # audio/video frames arrive before the tool response is sent.
+            tool_call_pending = asyncio.Event()
+            tool_call_pending.set()  # start open (not pending)
+
             # --- Sender: read from WebSocket, forward to Gemini ---
             async def send_from_client() -> None:
                 """Read from WebSocket, forward audio/video/text to Gemini.
 
-                Binary frames: 0x01+PCM = audio, 0x02+JPEG = video.
-                Text frames: JSON with type "text" or "close".
+                ALL sends use send_realtime_input to avoid interleaving
+                with send_client_content (which the SDK warns against).
                 """
                 try:
                     while not client_done.is_set():
@@ -303,11 +363,23 @@ async def session_endpoint(websocket: WebSocket) -> None:
                             raw_bytes = ws_msg["bytes"]
                             msg_type, payload = parse_binary_message(raw_bytes)
                             if msg_type == "audio":
+                                # Wait for any pending tool call to complete
+                                # before sending audio to avoid 1008 errors.
+                                await tool_call_pending.wait()
+                                # Yield so receiver can process a just-arrived
+                                # tool_call and close the gate before we send.
+                                await asyncio.sleep(0)
+                                if not tool_call_pending.is_set():
+                                    continue  # gate just closed, drop frame
                                 blob = types.Blob(
                                     data=payload, mime_type="audio/pcm;rate=16000"
                                 )
                                 await session.send_realtime_input(audio=blob)
                             elif msg_type == "video":
+                                await tool_call_pending.wait()
+                                await asyncio.sleep(0)
+                                if not tool_call_pending.is_set():
+                                    continue
                                 blob = types.Blob(
                                     data=payload, mime_type="image/jpeg"
                                 )
@@ -318,12 +390,15 @@ async def session_endpoint(websocket: WebSocket) -> None:
                             raw_text = ws_msg["text"]
                             msg_type, payload = parse_text_message(raw_text)
                             if msg_type == "text":
-                                await session.send_client_content(
-                                    turns=types.Content(
-                                        role="user",
-                                        parts=[types.Part(text=payload)],
-                                    ),
-                                    turn_complete=True,
+                                # Use send_realtime_input for text to avoid
+                                # interleaving with send_client_content (which
+                                # the SDK warns causes unexpected behavior).
+                                await tool_call_pending.wait()
+                                await asyncio.sleep(0)
+                                if not tool_call_pending.is_set():
+                                    continue
+                                await session.send_realtime_input(
+                                    text=payload
                                 )
                             elif msg_type == "notification":
                                 notif = json.loads(payload)
@@ -332,21 +407,25 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                 notification_text = (
                                     f"[NOTIFICATION from {source}]: {text}"
                                 )
-                                await session.send_client_content(
-                                    turns=types.Content(
-                                        role="user",
-                                        parts=[types.Part(text=notification_text)],
-                                    ),
-                                    turn_complete=True,
+                                await tool_call_pending.wait()
+                                await asyncio.sleep(0)
+                                if not tool_call_pending.is_set():
+                                    continue
+                                await session.send_realtime_input(
+                                    text=notification_text
                                 )
                             elif msg_type == "close":
                                 client_done.set()
                                 return
                 except WebSocketDisconnect:
+                    # Client (edge device) disconnected — stop everything.
                     client_done.set()
                 except Exception:
+                    # Gemini session error (1008/1011/etc.) — do NOT set
+                    # client_done.  Let _run_session exit and the retry
+                    # loop will reconnect to Gemini while keeping the
+                    # client WebSocket alive.
                     logger.exception("Error in send_from_client")
-                    client_done.set()
 
             # --- Receiver: process events from Gemini ---
             async def receive_from_gemini() -> None:
@@ -356,6 +435,11 @@ async def session_endpoint(websocket: WebSocket) -> None:
                 sent_out_text = ""
 
                 try:
+                  while not client_done.is_set():
+                    # session.receive() yields messages for ONE model
+                    # turn then stops (breaks on turn_complete).  We
+                    # wrap it in an outer loop so we keep listening
+                    # across multiple turns for the life of the session.
                     async for msg in session.receive():
                         if client_done.is_set():
                             return
@@ -377,66 +461,72 @@ async def session_endpoint(websocket: WebSocket) -> None:
 
                         # --- Tool calls ---
                         if hasattr(msg, "tool_call") and msg.tool_call:
-                            responses = []
-                            for fc in msg.tool_call.function_calls:
-                                fn_name = fc.name
-                                fn_args = dict(fc.args) if fc.args else {}
-                                logger.info(
-                                    "Tool call: %s(%s)", fn_name, fn_args
-                                )
-                                result = execute_tool(
-                                    fn_name, fn_args, TOOL_REGISTRY
-                                )
-                                # Forward args + status to edge client for
-                                # rendering. The client needs the original
-                                # args (data, placement, etc.) not just the
-                                # status dict the tool returns.
-                                client_payload = {**fn_args, **result}
-                                try:
-                                    await websocket.send_json(
-                                        format_tool_result(
-                                            fn_name, client_payload
+                            # Gate: block audio/video sends while we
+                            # process tool calls.  The Live API will
+                            # send 1008 if realtime input arrives
+                            # before the tool response.
+                            tool_call_pending.clear()
+                            try:
+                                responses = []
+                                for fc in msg.tool_call.function_calls:
+                                    fn_name = fc.name
+                                    fn_args = dict(fc.args) if fc.args else {}
+                                    logger.info(
+                                        "Tool call: %s(%s)", fn_name, fn_args
+                                    )
+                                    result = execute_tool(
+                                        fn_name, fn_args, TOOL_REGISTRY
+                                    )
+                                    # Translate consolidated tool names back
+                                    # to legacy per-action names the client
+                                    # expects (project_overlay, refresh_view,
+                                    # play_music, etc.).
+                                    client_name, client_fwd = (
+                                        _translate_tool_for_client(
+                                            fn_name, fn_args, result
                                         )
                                     )
-                                except Exception:
-                                    pass
-                                # Forward program/state tools to client
-                                # as dedicated message types.
-                                if fn_name in (
-                                    "run_program",
-                                    "stop_program",
-                                    "list_programs",
-                                    "get_overlay_state",
-                                    "generate_code",
-                                    "generate_video",
-                                    "play_video",
-                                    "stop_video",
-                                    "play_music",
-                                    "stop_music",
-                                    "pause_music",
-                                    "resume_music",
-                                    "replay_music",
-                                    "get_session_manifest",
-                                ):
+                                    # Forward args + status to edge client.
+                                    client_payload = {**fn_args, **result}
                                     try:
-                                        forward_msg = {
-                                            "type": fn_name,
-                                            **fn_args,
-                                        }
-                                        await websocket.send_json(forward_msg)
+                                        await websocket.send_json(
+                                            format_tool_result(
+                                                client_name, client_payload
+                                            )
+                                        )
                                     except Exception:
                                         pass
-                                responses.append(
-                                    types.FunctionResponse(
-                                        name=fn_name,
-                                        response=result,
-                                        id=fc.id,
+                                    # Forward dedicated message if needed.
+                                    if client_fwd is not None:
+                                        try:
+                                            await websocket.send_json(
+                                                client_fwd
+                                            )
+                                        except Exception:
+                                            pass
+                                    responses.append(
+                                        types.FunctionResponse(
+                                            name=fn_name,
+                                            response=result,
+                                            id=fc.id,
+                                        )
                                     )
+                                # Send tool responses back to Gemini.
+                                await session.send_tool_response(
+                                    function_responses=responses
                                 )
-                            # Send tool responses back to Gemini.
-                            await session.send_tool_response(
-                                function_responses=responses
-                            )
+                            finally:
+                                # Re-open the gate so audio/video can flow.
+                                tool_call_pending.set()
+                            continue
+
+                        # --- Tool call cancellation (user interrupted during tool exec) ---
+                        tc_cancel = getattr(msg, "tool_call_cancellation", None)
+                        if tc_cancel:
+                            cancelled_ids = getattr(tc_cancel, "ids", [])
+                            logger.info("Tool call cancelled: %s", cancelled_ids)
+                            # Re-open the gate in case it was stuck closed.
+                            tool_call_pending.set()
                             continue
 
                         # --- Server content (audio, transcriptions, interruptions) ---
@@ -509,15 +599,41 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                     except Exception:
                                         pass
 
+                    # async for ended — turn_complete or stream closed.
+                    # If the underlying WS is closed, break out of
+                    # the outer while loop too.
+                    try:
+                        ws = getattr(session, "_ws", None)
+                        if ws and hasattr(ws, "close_code") and ws.close_code is not None:
+                            logger.info(
+                                "Gemini WS closed: code=%s reason=%s",
+                                ws.close_code,
+                                getattr(ws, "close_reason", ""),
+                            )
+                            break
+                    except Exception:
+                        pass
+
                 except WebSocketDisconnect:
                     client_done.set()
+                except Exception:
+                    logger.exception("Unexpected error in receive_from_gemini")
+                    raise  # let the exception propagate so _run_session crashes
+                finally:
+                    logger.info("receive_from_gemini exited (client_done=%s)", client_done.is_set())
 
             # Run sender and receiver concurrently.
-            sender = asyncio.create_task(send_from_client())
-            receiver = asyncio.create_task(receive_from_gemini())
+            sender = asyncio.create_task(send_from_client(), name="sender")
+            receiver = asyncio.create_task(receive_from_gemini(), name="receiver")
             try:
                 done, pending = await asyncio.wait(
                     {sender, receiver}, return_when=asyncio.FIRST_COMPLETED
+                )
+                done_names = [t.get_name() for t in done]
+                pending_names = [t.get_name() for t in pending]
+                logger.info(
+                    "Task finished: %s (still running: %s)",
+                    done_names, pending_names,
                 )
                 for task in pending:
                     task.cancel()
@@ -546,31 +662,32 @@ async def session_endpoint(websocket: WebSocket) -> None:
             logger.info(
                 "Session ended cleanly (attempt %d) — reconnecting", attempt
             )
-            try:
-                await websocket.send_json(
-                    format_transcript("out", "(Reconnecting to Gemini...)")
-                )
-            except Exception:
-                break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
         except WebSocketDisconnect:
             break
-        except Exception:
-            logger.exception(
-                "Live session crashed (attempt %d/%d) — reconnecting",
-                attempt,
-                max_retries,
-            )
+        except Exception as exc:
+            exc_str = str(exc)
+            is_transient = "1008" in exc_str or "1011" in exc_str
+            if is_transient:
+                # 1008 = tool call race, 1011 = Gemini internal error.
+                # These are expected and recoverable — reconnect silently.
+                logger.warning(
+                    "Gemini session dropped (%s, attempt %d/%d) — reconnecting",
+                    "1008" if "1008" in exc_str else "1011",
+                    attempt,
+                    max_retries,
+                )
+            else:
+                logger.exception(
+                    "Live session crashed (attempt %d/%d) — reconnecting",
+                    attempt,
+                    max_retries,
+                )
             if client_done.is_set():
                 break
             if attempt < max_retries:
-                try:
-                    await websocket.send_json(
-                        format_transcript("out", "(Reconnecting to Gemini...)")
-                    )
-                except Exception:
-                    break
-                await asyncio.sleep(1)
+                # Fast reconnect for transient errors, slower for unknown ones.
+                await asyncio.sleep(0.2 if is_transient else 1.0)
             else:
                 logger.error("Max retries reached — giving up")
                 try:

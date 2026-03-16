@@ -93,10 +93,16 @@ class FakeGoAway:
 
 
 @dataclass
+class FakeToolCallCancellation:
+    ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class FakeServerMessage:
     """A single message yielded by session.receive()."""
     server_content: FakeServerContent | None = None
     tool_call: FakeToolCall | None = None
+    tool_call_cancellation: FakeToolCallCancellation | None = None
     session_resumption_update: FakeSessionResumptionUpdate | None = None
     go_away: Any = None
 
@@ -118,8 +124,8 @@ class MockLiveSession:
         # Event to signal that all scripted messages have been consumed.
         self._all_sent = asyncio.Event()
 
-    async def send_realtime_input(self, *, audio=None, video=None):
-        self.realtime_inputs.append({"audio": audio, "video": video})
+    async def send_realtime_input(self, *, audio=None, video=None, text=None):
+        self.realtime_inputs.append({"audio": audio, "video": video, "text": text})
 
     async def send_client_content(self, *, turns=None, turn_complete=False):
         self.client_contents.append(
@@ -143,6 +149,7 @@ class MockLiveSession:
         self._closed = True
 
     async def __aenter__(self):
+        self._closed = False  # reset on reconnect (same object reused)
         return self
 
     async def __aexit__(self, *args):
@@ -180,7 +187,9 @@ def _make_mock_genai(session: MockLiveSession):
     mock_types.RealtimeInputConfig = MagicMock(return_value=MagicMock())
     mock_types.AutomaticActivityDetection = MagicMock(return_value=MagicMock())
     mock_types.StartSensitivity.START_SENSITIVITY_HIGH = "HIGH"
+    mock_types.StartSensitivity.START_SENSITIVITY_LOW = "LOW"
     mock_types.EndSensitivity.END_SENSITIVITY_HIGH = "HIGH"
+    mock_types.ProactivityConfig = MagicMock(return_value=MagicMock())
     mock_types.ContextWindowCompressionConfig = MagicMock(return_value=MagicMock())
     mock_types.SlidingWindow = MagicMock(return_value=MagicMock())
     mock_types.SessionResumptionConfig = MagicMock(return_value=MagicMock())
@@ -305,19 +314,20 @@ class TestVideoForwarding:
 
 class TestTextForwarding:
     def test_text_forwarded_to_gemini(self, make_ws):
-        """Send text via JSON, verify send_client_content was called on session."""
+        """Send text via JSON, verify send_realtime_input(text=) was called."""
         session, ws, handle = make_ws()
         try:
             ws.send_json({"type": "text", "text": "What is 2+2?"})
             import time
             time.sleep(0.5)
 
-            assert len(session.client_contents) >= 1
-            sent = session.client_contents[0]
-            assert sent["turn_complete"] is True
-            # The turns object should be a FakeContent with the text.
-            turns = sent["turns"]
-            assert turns.parts[0].text == "What is 2+2?"
+            # Text now goes via send_realtime_input (not send_client_content)
+            # to avoid the interleaving warning.
+            text_inputs = [
+                r for r in session.realtime_inputs if r.get("text")
+            ]
+            assert len(text_inputs) >= 1
+            assert text_inputs[0]["text"] == "What is 2+2?"
         finally:
             handle.close()
 
@@ -380,7 +390,7 @@ class TestTranscript:
 
 class TestToolCallFlow:
     def test_tool_call_executed_and_responded(self, make_ws):
-        """Mock yields a tool_call for project_overlay.
+        """Mock yields a tool_call for overlay (create action).
 
         Verify: tool executed, result sent to client, FunctionResponse sent
         back to session.
@@ -390,8 +400,9 @@ class TestToolCallFlow:
                 tool_call=FakeToolCall(
                     function_calls=[
                         FakeFunctionCall(
-                            name="project_overlay",
+                            name="overlay",
                             args={
+                                "action": "create",
                                 "content_type": "annotation",
                                 "placement": [100, 100, 500, 600],
                                 "title": "Test label",
@@ -411,6 +422,7 @@ class TestToolCallFlow:
             # Client should receive the tool_result message (JSON).
             resp = ws.receive_json(mode="text")
             assert resp["type"] == "tool_result"
+            # Translated back to legacy name for client.
             assert resp["name"] == "project_overlay"
             assert resp["result"]["status"] == "displayed"
             assert resp["result"]["content_type"] == "annotation"
@@ -422,7 +434,7 @@ class TestToolCallFlow:
             assert len(session.tool_responses) >= 1
             fn_responses = session.tool_responses[0]["function_responses"]
             assert len(fn_responses) == 1
-            assert fn_responses[0]["name"] == "project_overlay"
+            assert fn_responses[0]["name"] == "overlay"
             assert fn_responses[0]["id"] == "call_42"
             assert fn_responses[0]["response"]["status"] == "displayed"
         finally:
@@ -448,17 +460,18 @@ class TestInterruption:
 
 
 class TestSessionReconnect:
-    def test_session_reconnect_on_crash(self, make_ws):
-        """Mock raises an exception during receive, verify reconnection attempt.
+    def test_session_reconnect_on_crash(self):
+        """Mock raises on first receive(), succeeds on second — verify reconnect.
 
-        We use a custom session that raises on first receive, then succeeds
-        with a transcript on the second connection.
+        Reads messages eagerly (no time.sleep) and sends close from a
+        background thread as a safety timeout.
         """
+        import threading
 
         call_count = {"n": 0}
 
         class CrashThenOkSession(MockLiveSession):
-            """First connection raises, second yields a transcript."""
+            """First receive raises, second yields a transcript then waits."""
 
             def __init__(self):
                 super().__init__([])
@@ -467,7 +480,6 @@ class TestSessionReconnect:
                 call_count["n"] += 1
                 if call_count["n"] == 1:
                     raise RuntimeError("Simulated Gemini crash")
-                # Second connection: yield a transcript then stay alive.
                 yield FakeServerMessage(
                     server_content=FakeServerContent(
                         output_transcription=FakeOutputTranscription(
@@ -481,6 +493,9 @@ class TestSessionReconnect:
         session = CrashThenOkSession()
         mock_genai, mock_types, _ = _make_mock_genai(session)
 
+        from backend.main import _gemini_client_cache
+        _gemini_client_cache.clear()
+
         patcher = patch.dict(
             "sys.modules",
             {
@@ -492,31 +507,40 @@ class TestSessionReconnect:
         patcher.start()
         try:
             client = TestClient(app)
-            with client.websocket_connect("/ws/session") as ws:
-                ws.send_json({"text_only": False})
+            ws = client.websocket_connect("/ws/session")
+            ws.__enter__()
+            ws.send_json({"text_only": False})
 
+            # After the crash the backend reconnects silently and the
+            # second session yields "Recovered!" as a transcript.
+            # Use a safety thread to send close if reading blocks.
+            def _safety_close():
                 import time
-                time.sleep(1.5)  # Give time for crash + reconnect + message delivery.
+                time.sleep(8)
+                try:
+                    ws.send_json({"type": "close"})
+                except Exception:
+                    pass
 
-                # We should get the reconnecting transcript and then the recovered one.
-                received = []
-                # Drain all available messages.
-                for _ in range(10):
-                    try:
-                        resp = ws.receive_json(mode="text")
-                        received.append(resp)
-                    except Exception:
-                        break
+            safety = threading.Thread(target=_safety_close, daemon=True)
+            safety.start()
 
-                # Should have at least the reconnection notice.
-                types_seen = [r["type"] for r in received]
-                texts_seen = [r.get("text", "") for r in received]
+            msg1 = ws.receive_json(mode="text")
+            assert msg1["type"] == "transcript_out"
+            assert "Recovered" in msg1.get("text", "")
+            assert call_count["n"] >= 2
 
-                assert "transcript_out" in types_seen
-                # Either reconnecting message or recovered message should be present.
-                assert any(
-                    "Reconnecting" in t or "Recovered" in t for t in texts_seen
-                ), f"Expected reconnection evidence, got: {texts_seen}"
-                assert call_count["n"] >= 2, "Session should have been created at least twice"
+            # Clean up
+            try:
+                ws.send_json({"type": "close"})
+            except Exception:
+                pass
+            import time
+            time.sleep(0.2)
+            try:
+                ws.__exit__(None, None, None)
+            except Exception:
+                pass
         finally:
             patcher.stop()
+            _gemini_client_cache.clear()

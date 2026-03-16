@@ -38,6 +38,53 @@ class TestUnrotatePlacement:
         assert result == [200, 500, 600, 900]
 
 
+class TestUnrotateImage:
+    """Locally-rendered overlays must be un-rotated to match the human's viewing angle."""
+
+    def _make_asymmetric_image(self):
+        """Create an image with a recognizable corner so rotation is detectable."""
+        img = np.zeros((100, 200, 3), dtype=np.uint8)
+        # Red square in top-left corner only
+        img[0:20, 0:20] = [0, 0, 255]
+        return img
+
+    def test_rotate_0_no_change(self):
+        mgr = OverlayManager(H_proj=None, image_rotate=0)
+        img = self._make_asymmetric_image()
+        result = mgr._unrotate_image(img)
+        assert result.shape == img.shape
+        assert np.array_equal(result, img)
+
+    def test_rotate_270_applies_90_cw(self):
+        """image_rotate=270 means frame was rotated 270 CW. Undo = rotate 90 CW."""
+        mgr = OverlayManager(H_proj=None, image_rotate=270)
+        img = self._make_asymmetric_image()  # 100x200, red in top-left
+        result = mgr._unrotate_image(img)
+        # 90 CW: (100, 200) -> (200, 100), red moves to top-right
+        assert result.shape == (200, 100, 3)
+        # Top-right corner should be red
+        assert result[0, 99, 2] == 255  # red channel
+        # Top-left should be black
+        assert result[0, 0, 2] == 0
+
+    def test_rotate_90_applies_270_cw(self):
+        mgr = OverlayManager(H_proj=None, image_rotate=90)
+        img = self._make_asymmetric_image()
+        result = mgr._unrotate_image(img)
+        assert result.shape == (200, 100, 3)
+        # 270 CW (= 90 CCW): red moves to bottom-left
+        assert result[199, 0, 2] == 255
+
+    def test_rotate_180_flips(self):
+        mgr = OverlayManager(H_proj=None, image_rotate=180)
+        img = self._make_asymmetric_image()
+        result = mgr._unrotate_image(img)
+        assert result.shape == img.shape
+        # 180: red moves to bottom-right
+        assert result[99, 199, 2] == 255
+        assert result[0, 0, 2] == 0
+
+
 class TestHandleToolResultCallsUnrotate:
     def test_handle_tool_result_applies_unrotate(self):
         """handle_tool_result must call _unrotate_placement when image_rotate != 0."""

@@ -7,6 +7,7 @@ but start() will fail if it's not available.
 """
 
 import queue
+import threading
 
 try:
     import pyaudio
@@ -79,6 +80,13 @@ class AudioPlayer:
     """Plays audio received from the backend.
 
     Uses a background thread for playback so callers never block.
+    ``clear()`` flushes queued audio and signals the playback thread
+    to skip writes so interruptions are near-instant.
+
+    Thread safety: ``clear()`` is called from the async event loop thread
+    while ``_playback_loop`` runs in a background thread.  A lock protects
+    the stream so ``clear()`` never calls ``stop_stream()`` while
+    ``write()`` is in progress.
     """
 
     def __init__(self, rate: int = 24000, channels: int = 1):
@@ -89,6 +97,39 @@ class AudioPlayer:
         self._stream = None
         self._queue: queue.Queue[bytes] = queue.Queue()
         self._thread = None
+        self._interrupted = False  # signal playback thread to skip writes
+        self._stream_lock = threading.Lock()
+
+    @property
+    def is_playing(self) -> bool:
+        """True when there is audio queued or being written to the speaker."""
+        return not self._queue.empty()
+
+    def clear(self) -> None:
+        """Immediately stop all audio playback (on interruption).
+
+        1. Sets _interrupted so the playback thread skips writes.
+        2. Drains the Python queue (pending chunks).
+        3. Stops and restarts the PyAudio stream to flush the OS buffer,
+           but only when the playback thread isn't mid-write.
+        """
+        self._interrupted = True
+        # Drain the queue.
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+        # Flush the OS audio buffer by restarting the stream.
+        # The lock ensures we don't race with _playback_loop's write().
+        with self._stream_lock:
+            if self._stream:
+                try:
+                    self._stream.stop_stream()
+                    self._stream.start_stream()
+                except Exception:
+                    pass
+        self._interrupted = False
 
     def start(self):
         """Open the output audio stream and start playback thread."""
@@ -101,7 +142,6 @@ class AudioPlayer:
             rate=self.rate,
             output=True,
         )
-        import threading
         self._thread = threading.Thread(target=self._playback_loop, daemon=True)
         self._thread.start()
 
@@ -112,8 +152,16 @@ class AudioPlayer:
                 pcm_bytes = self._queue.get(timeout=0.5)
                 if pcm_bytes is None:  # poison pill
                     return
-                if self._stream:
-                    self._stream.write(pcm_bytes)
+                if self._interrupted:
+                    continue  # skip — clear() is flushing
+                with self._stream_lock:
+                    if self._stream and not self._interrupted:
+                        try:
+                            self._stream.write(pcm_bytes)
+                        except OSError:
+                            # PortAudio error (e.g. stream was reset by clear()).
+                            # Not fatal — next write will work after restart.
+                            pass
             except queue.Empty:
                 continue
 
@@ -127,10 +175,11 @@ class AudioPlayer:
             self._queue.put(None)  # poison pill
             self._thread.join(timeout=2)
             self._thread = None
-        if self._stream:
-            self._stream.stop_stream()
-            self._stream.close()
-            self._stream = None
+        with self._stream_lock:
+            if self._stream:
+                self._stream.stop_stream()
+                self._stream.close()
+                self._stream = None
         if self._pa:
             self._pa.terminate()
             self._pa = None

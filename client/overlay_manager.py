@@ -82,11 +82,12 @@ class OverlayManager:
         if content_type == "image":
             # Image generation is slow — show loading placeholder immediately,
             # then generate in a background thread and swap in the result.
-            self._show_overlay(
-                render_loading(data.get("prompt", title),
-                               *self._placement_pixel_size(placement)),
-                placement, content_type,
+            loading = render_loading(
+                data.get("prompt", title),
+                *self._placement_pixel_size(placement),
             )
+            loading = self._unrotate_image(loading)
+            self._show_overlay(loading, placement, content_type)
             logger.info("Generating image at %s", placement)
             thread = threading.Thread(
                 target=self._generate_image_async,
@@ -97,9 +98,27 @@ class OverlayManager:
             return
 
         overlay = self.render_overlay(content_type, placement, title, data)
+        # Un-rotate locally-rendered overlays (text, graphs, etc.) so they
+        # appear in the human's orientation, not the camera's.
+        overlay = self._unrotate_image(overlay)
         self._show_overlay(overlay, placement, content_type)
         self._last_rendered_overlay = overlay  # cached for overlay_state registration
         logger.info("Rendered %s at %s", content_type, placement)
+
+    def _unrotate_image(self, overlay: np.ndarray) -> np.ndarray:
+        """Un-rotate a locally-rendered overlay to match the human's viewing angle.
+
+        Applied to text, graphs, markdown, etc. — content rendered in standard
+        orientation that must be rotated to match the canvas (camera space).
+        NOT applied to AI-generated images (those are already standard orientation).
+        """
+        if self.image_rotate == 90:
+            return cv2.rotate(overlay, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        elif self.image_rotate == 180:
+            return cv2.rotate(overlay, cv2.ROTATE_180)
+        elif self.image_rotate == 270:
+            return cv2.rotate(overlay, cv2.ROTATE_90_CLOCKWISE)
+        return overlay
 
     def _show_overlay(self, overlay: np.ndarray, placement: list, content_type: str):
         """Apply projector flip and place overlay on canvas."""
@@ -140,6 +159,11 @@ class OverlayManager:
 
             enhance = include_view and ref_frame is not None
             overlay = render_image(prompt, w, h, reference_frame=ref_frame, style=style, enhance=enhance)
+
+            # NOTE: Generated images are NOT un-rotated. The image gen API
+            # produces images in standard orientation from a text prompt —
+            # they don't inherit the camera rotation. Only the placement
+            # coordinates need un-rotation (handled by _unrotate_placement).
 
             # Save to scene gallery by title.
             self.scenes[title] = overlay.copy()
