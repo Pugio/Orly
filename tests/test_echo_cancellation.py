@@ -88,13 +88,15 @@ class TestAudioPlayerIsPlaying:
 class TestAudioSendLoopAlwaysForwards:
     """audio_send_loop must ALWAYS forward mic audio to Gemini.
 
-    Mic gating was removed because it prevented Gemini's server-side
-    VAD from detecting user speech, breaking interruption handling.
+    When no processor is provided, all audio is forwarded raw.
+    When a processor is provided, audio is preprocessed but still forwarded
+    (the processor may replace quiet chunks with silence, but chunks are
+    never dropped entirely).
     """
 
     @pytest.mark.asyncio
     async def test_sends_all_audio_chunks(self):
-        """All mic audio is forwarded — never gated."""
+        """All mic audio is forwarded — never gated (no processor)."""
         from client.audio import AudioCapture
 
         capture = AudioCapture.__new__(AudioCapture)
@@ -121,6 +123,51 @@ class TestAudioSendLoopAlwaysForwards:
             pass
 
         assert len(sent_chunks) == 2
+
+    @pytest.mark.asyncio
+    async def test_sends_all_chunks_with_processor(self):
+        """With a processor, chunks are still forwarded (possibly as silence)."""
+        from client.audio import AudioCapture
+        from client.audio_processor import AudioProcessor
+
+        capture = AudioCapture.__new__(AudioCapture)
+        capture._audio_queue = queue.Queue()
+        capture.chunk_size = 320
+
+        # Two chunks — one quiet (will be gated to silence), one loud
+        import struct
+        quiet = b"\x00" * 640  # silence
+        loud = struct.pack("<320h", *([5000] * 320))  # speech-level
+
+        capture._audio_queue.put(quiet)
+        capture._audio_queue.put(loud)
+
+        sent_chunks: list[bytes] = []
+
+        class FakeClient:
+            async def send_audio(self, data):
+                sent_chunks.append(data)
+
+        processor = AudioProcessor(noise_gate_rms=150)
+
+        from client.main import audio_send_loop
+
+        task = asyncio.create_task(
+            audio_send_loop(capture, FakeClient(), processor=processor)
+        )
+        await asyncio.sleep(0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Both chunks forwarded (silence chunk becomes zero bytes, loud passes)
+        assert len(sent_chunks) == 2
+        # First chunk should be silence (gated)
+        assert all(b == 0 for b in sent_chunks[0])
+        # Second chunk should have audio content
+        assert not all(b == 0 for b in sent_chunks[1])
 
 
 # ---------------------------------------------------------------------------
