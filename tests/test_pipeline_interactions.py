@@ -92,15 +92,6 @@ class PipelineHarness:
         # If gen_id changed, this is a stale completion — skip (matching real behavior)
         self._async_gen_id = None
 
-    def run_program(self, name: str = "test_prog"):
-        """Start a simple sleeping program."""
-        code = "import time\nwhile not table._stop_event.is_set(): time.sleep(0.01)"
-        self.runtime.run(name, code, "test")
-
-    def stop_program(self, name: str = "test_prog"):
-        """Stop a program."""
-        self.runtime.stop(name)
-
     def program_adds_overlay(self):
         """Simulate a program placing an overlay via table.place_overlay."""
         img = _make_overlay_img(brightness=150)
@@ -168,26 +159,11 @@ class Event:
     args: tuple = ()
 
 
-# Core event palette
 OVERLAY_EVENTS = [
     Event("add_a", "add_overlay", ("overlay_a",)),
     Event("add_b", "add_overlay", ("overlay_b",)),
     Event("remove_a", "remove_overlay", ("overlay_a",)),
     Event("interrupt", "interrupt"),
-]
-
-REFRESH_EVENTS = [
-    Event("request_refresh", "request_refresh"),
-    Event("complete_refresh", "complete_refresh"),
-]
-
-ASYNC_IMAGE_EVENTS = [
-    Event("start_async", "start_async_image"),
-    Event("complete_async", "complete_async_image"),
-]
-
-PROGRAM_EVENTS = [
-    Event("prog_overlay", "program_adds_overlay"),
 ]
 
 

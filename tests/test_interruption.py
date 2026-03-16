@@ -299,24 +299,37 @@ class TestVideoLoopAfterInterrupt:
 class TestProgramsSurviveInterrupt:
     def test_programs_not_stopped_by_clear(self):
         """overlay_state.clear() should not stop running programs."""
-        from client.program_runtime import ProgramRuntime
+        from client.program_runtime import ProgramRuntime, TableAPI
+        from client.object_tracker import ObjectTracker
 
-        runtime = ProgramRuntime(table_api_factory=lambda: MagicMock())
-        # Run a simple long-running program
-        code = "import time\nwhile not table._stop_event.is_set(): time.sleep(0.01)"
-        runtime.run("test_prog", code, "test")
-
-        programs_before = [p.name for p in runtime.list_programs()]
-        assert "test_prog" in programs_before
-
-        # Simulate interruption (clear overlays, but don't touch runtime)
         om = make_overlay_manager()
         osm = OverlayStateManager(om)
+        om.overlay_state = osm
+
+        def make_api():
+            return TableAPI(
+                overlay_state_manager=osm,
+                object_tracker=ObjectTracker(),
+                session_store=MagicMock(),
+                notify_fn=lambda msg: None,
+                get_frame_fn=lambda: None,
+            )
+
+        runtime = ProgramRuntime(table_api_factory=make_api)
+        code = "import time\nwhile not table.stopped: time.sleep(0.01)"
+        runtime.run("test_prog", code, "test")
+
+        # Give the thread a moment to start
+        time.sleep(0.05)
+        status = runtime.get_status("test_prog")
+        assert status.state == "running"
+
+        # Simulate interruption (clear overlays, but don't touch runtime)
         osm.clear()
 
-        # Program should still be listed
-        programs_after = [p.name for p in runtime.list_programs()]
-        assert "test_prog" in programs_after
+        # Program should still be running
+        status_after = runtime.get_status("test_prog")
+        assert status_after.state == "running"
 
         # Cleanup
         runtime.stop_all()
