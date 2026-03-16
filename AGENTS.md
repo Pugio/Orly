@@ -65,7 +65,7 @@ tablelight/
 ├── poc/                   ← Proof-of-concept scripts
 ├── infra/                 ← Terraform / deploy scripts
 ├── docs/                  ← Architecture diagram, demo script, blog
-└── tests/                 ← 958 tests
+└── tests/                 ← 991 tests
 ```
 
 ## Current State
@@ -73,7 +73,7 @@ tablelight/
 - End-to-end system: **working** — camera → backend → projector overlay
 - ADK → raw GenAI SDK migration: **done** — separate audio/video streams, no FIFO
 - Simulation harness: **done** — `uv run python -m simulation.latency_benchmark`
-- Test coverage: **958 tests** passing
+- Test coverage: **991 tests** passing
 - Manual projector calibration: **done**
 - Image generation (Gemini): **done** — with enhance mode for user drawings
 - Markdown/annotation rendering: **done**
