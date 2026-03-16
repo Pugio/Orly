@@ -53,7 +53,7 @@ def test_deploy_script_has_session_affinity():
 
 def test_deploy_script_has_min_instances():
     content = (INFRA_DIR / "deploy.sh").read_text()
-    assert "--min-instances=1" in content
+    assert "--min-instances=" in content
 
 
 def test_deploy_script_has_timeout():

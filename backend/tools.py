@@ -8,7 +8,27 @@ Three tools cover the full demo surface:
 Removed tools (programs, video) live in tools_roadmap.py.
 """
 
-from client.renderer.registry import valid_types as _registry_valid_types
+# Valid overlay content types — must stay in sync with client/renderer/.
+# We hardcode this list instead of importing from client.renderer.registry
+# because the backend Docker image doesn't include the client package.
+_VALID_CONTENT_TYPES = frozenset({
+    "annotation",
+    "chemistry",
+    "flashcard",
+    "geometry",
+    "graph",
+    "highlight",
+    "image",
+    "markdown",
+    "number_line",
+    "steps",
+    "video",
+})
+
+
+def _registry_valid_types() -> frozenset[str]:
+    """Return the set of valid overlay content types."""
+    return _VALID_CONTENT_TYPES
 
 
 # ---------------------------------------------------------------------------
