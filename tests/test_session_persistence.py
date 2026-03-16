@@ -118,8 +118,9 @@ def test_restore_session_state_returns_overlay_count(store):
 
     count = restore_session_state(store, overlay_manager)
     assert count == 2
-    # Verify handle_tool_result was called for each non-image overlay
-    assert overlay_manager.handle_tool_result.call_count == 2
+    # Verify render_overlay + _show_overlay were called for each non-image overlay
+    assert overlay_manager.render_overlay.call_count == 2
+    assert overlay_manager._show_overlay.call_count == 2
 
 
 def test_restore_session_state_empty(store):

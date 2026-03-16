@@ -34,12 +34,12 @@ def restore_session_state(session_store, overlay_manager) -> int:
                 overlay_manager._show_overlay(img, placement, content_type)
                 restored += 1
         else:
-            overlay_manager.handle_tool_result("project_overlay", {
-                "content_type": content_type,
-                "placement": placement,
-                "title": title,
-                "data": data,
-            })
+            # Render and place directly — don't go through handle_tool_result
+            # because saved placements are already in unrotated table space,
+            # and handle_tool_result would double-apply _unrotate_placement.
+            overlay = overlay_manager.render_overlay(
+                content_type, placement, title, data)
+            overlay_manager._show_overlay(overlay, placement, content_type)
             restored += 1
 
     # Restore scene order

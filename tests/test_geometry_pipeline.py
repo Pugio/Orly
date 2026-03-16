@@ -72,15 +72,6 @@ def _asymmetric_overlay(w=100, h=100):
     return img
 
 
-def _check_pixel_color(canvas, py, px, expected_channel, label):
-    """Assert that a canvas pixel has significant intensity in the expected channel."""
-    pixel = canvas[py, px]
-    assert pixel[expected_channel] > 100, (
-        f"{label}: pixel ({py},{px}) should have channel {expected_channel} > 100, "
-        f"got BGR={tuple(pixel)}"
-    )
-
-
 def _expected_projector_region(placement, H_proj):
     """Given a Gemini placement, compute where it should land on the projector.
 
