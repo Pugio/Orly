@@ -140,11 +140,13 @@ class CameraCapture:
         webcam: int | None = None,
         output_size: tuple[int, int] = (768, 768),
         rotate: int = 0,
+        latency_tracker=None,
     ):
         self.url = url
         self.webcam = webcam
         self.output_size = output_size
         self.rotate = rotate  # CW rotation in degrees (0, 90, 180, 270)
+        self.latency_tracker = latency_tracker
 
         self.cap = None
         self.detector = None
@@ -229,8 +231,15 @@ class CameraCapture:
         Returns (None, None, None) if no frame available or no homography
         (current or cached).
         """
+        lt = self.latency_tracker
+
+        if lt:
+            lt.begin("camera_capture")
+
         frame = self._capture_frame()
         if frame is None:
+            if lt:
+                lt.end("camera_capture")
             return None, None, None
 
         self.stats["frames_captured"] += 1
@@ -246,6 +255,9 @@ class CameraCapture:
         elif self.H_cached is not None:
             self.stats["frames_using_cache"] += 1
 
+        if lt:
+            lt.end("camera_capture")
+
         if self.H_cached is None:
             return None, None, None
 
@@ -260,7 +272,11 @@ class CameraCapture:
         elif self.rotate == 270:
             rectified = cv2.rotate(rectified, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
+        if lt:
+            lt.begin("encode_jpeg")
         jpeg_bytes = encode_jpeg(rectified)
+        if lt:
+            lt.end("encode_jpeg")
 
         return jpeg_bytes, rectified, self.H_cached
 

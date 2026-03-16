@@ -19,9 +19,10 @@ class TableLightClient:
     results, and control messages.
     """
 
-    def __init__(self, backend_url: str):
+    def __init__(self, backend_url: str, latency_tracker=None):
         self.backend_url = backend_url
         self.ws = None
+        self.latency_tracker = latency_tracker
         self._on_audio = None           # async def(audio_bytes)
         self._on_tool_result = None     # async def(name, result)
         self._on_transcript = None      # async def(direction, text)
@@ -31,6 +32,16 @@ class TableLightClient:
         self._on_stop_program = None    # async def(name)
         self._on_get_overlay_state = None  # async def() -> dict
         self._on_list_programs = None       # async def()
+        self._on_generate_code = None      # async def(name, description, context)
+        self._on_generate_video = None     # async def(name, prompt, placement, duration, aspect_ratio)
+        self._on_play_video = None         # async def(name, placement, loop)
+        self._on_stop_video = None         # async def(name)
+        self._on_play_music = None         # async def(name, prompt, bpm, temperature, guidance)
+        self._on_stop_music = None         # async def(name)
+        self._on_pause_music = None        # async def()
+        self._on_resume_music = None       # async def()
+        self._on_replay_music = None       # async def(name)
+        self._on_get_session_manifest = None  # async def()
 
     async def connect(self, text_only: bool = False):
         """Connect to backend WebSocket.
@@ -107,6 +118,46 @@ class TableLightClient:
         """Register callback for program list queries. callback()"""
         self._on_list_programs = callback
 
+    def on_generate_code(self, callback):
+        """Register callback for code generation requests. callback(name, description, context)"""
+        self._on_generate_code = callback
+
+    def on_generate_video(self, callback):
+        """Register callback for video generation. callback(name, prompt, placement, duration, aspect_ratio)"""
+        self._on_generate_video = callback
+
+    def on_play_video(self, callback):
+        """Register callback for video playback. callback(name, placement, loop)"""
+        self._on_play_video = callback
+
+    def on_stop_video(self, callback):
+        """Register callback for stopping video. callback(name)"""
+        self._on_stop_video = callback
+
+    def on_play_music(self, callback):
+        """Register callback for music playback. callback(name, prompt, bpm, temperature, guidance)"""
+        self._on_play_music = callback
+
+    def on_stop_music(self, callback):
+        """Register callback for stopping music. callback(name)"""
+        self._on_stop_music = callback
+
+    def on_pause_music(self, callback):
+        """Register callback for pausing music. callback()"""
+        self._on_pause_music = callback
+
+    def on_resume_music(self, callback):
+        """Register callback for resuming music. callback()"""
+        self._on_resume_music = callback
+
+    def on_replay_music(self, callback):
+        """Register callback for replaying saved music. callback(name)"""
+        self._on_replay_music = callback
+
+    def on_get_session_manifest(self, callback):
+        """Register callback for session manifest queries. callback()"""
+        self._on_get_session_manifest = callback
+
     async def send_notification(self, source: str, text: str) -> None:
         """Send an async notification to the backend."""
         if not self.connected:
@@ -121,11 +172,17 @@ class TableLightClient:
         """
         try:
             async for raw in self.ws:
+                lt = self.latency_tracker
+                if lt:
+                    lt.begin("ws_dispatch")
+
                 # Binary frame: audio from server
                 if isinstance(raw, bytes):
                     if len(raw) >= 1 and raw[0:1] == PREFIX_AUDIO_OUT:
                         if self._on_audio:
                             await self._on_audio(raw[1:])
+                    if lt:
+                        lt.end("ws_dispatch")
                     continue
 
                 # Text frame: JSON message
@@ -155,6 +212,49 @@ class TableLightClient:
                     await self._on_get_overlay_state()
                 elif msg_type == "list_programs" and self._on_list_programs:
                     await self._on_list_programs()
+                elif msg_type == "generate_code" and self._on_generate_code:
+                    await self._on_generate_code(
+                        msg.get("name", ""),
+                        msg.get("description", ""),
+                        msg.get("context", ""),
+                    )
+                elif msg_type == "generate_video" and self._on_generate_video:
+                    await self._on_generate_video(
+                        msg.get("name", ""),
+                        msg.get("prompt", ""),
+                        msg.get("placement", [0, 0, 1000, 1000]),
+                        msg.get("duration", 5),
+                        msg.get("aspect_ratio", "16:9"),
+                    )
+                elif msg_type == "play_video" and self._on_play_video:
+                    await self._on_play_video(
+                        msg.get("name", ""),
+                        msg.get("placement", [0, 0, 1000, 1000]),
+                        msg.get("loop", False),
+                    )
+                elif msg_type == "stop_video" and self._on_stop_video:
+                    await self._on_stop_video(msg.get("name", ""))
+                elif msg_type == "play_music" and self._on_play_music:
+                    await self._on_play_music(
+                        msg.get("name", ""),
+                        msg.get("prompt", ""),
+                        msg.get("bpm", 120),
+                        msg.get("temperature", 1.0),
+                        msg.get("guidance", 3.0),
+                    )
+                elif msg_type == "stop_music" and self._on_stop_music:
+                    await self._on_stop_music(msg.get("name", ""))
+                elif msg_type == "pause_music" and self._on_pause_music:
+                    await self._on_pause_music()
+                elif msg_type == "resume_music" and self._on_resume_music:
+                    await self._on_resume_music()
+                elif msg_type == "replay_music" and self._on_replay_music:
+                    await self._on_replay_music(msg.get("name", ""))
+                elif msg_type == "get_session_manifest" and self._on_get_session_manifest:
+                    await self._on_get_session_manifest()
+
+                if lt:
+                    lt.end("ws_dispatch")
         except websockets.exceptions.ConnectionClosed as e:
             print(f"[TableLight] Backend connection closed: {e}")
         except Exception as e:

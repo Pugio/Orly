@@ -21,6 +21,7 @@ class TestCameraReturnsRawFrame:
         cam.detector = None
         cam.dst_points = None
         cam._last_detection_time = 0
+        cam.latency_tracker = None
 
         # Monkey-patch _capture_frame to return a test frame
         test_frame = np.full((480, 640, 3), 128, dtype=np.uint8)

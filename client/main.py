@@ -30,10 +30,16 @@ import numpy as np
 from client.audio import AudioCapture, AudioPlayer
 from client.camera import CameraCapture
 from client.display import show_on_projector, show_on_laptop, get_projector_resolution
+from client.latency_overlay import composite_debug_overlay, render_latency_overlay
+from client.latency_tracker import LatencyTracker
 from client.object_tracker import ObjectTracker
 from client.overlay_manager import OverlayManager
 from client.overlay_state import OverlayStateManager
-from client.program_runtime import ProgramRuntime, TableAPI
+from client.code_generator import CodeGenerator
+from client.program_runtime import ProgramRuntime, TableAPI, validate_code
+from client.music_player import MusicPlayer
+from client.video_generator import VideoGenerator
+from client.video_player import VideoPlayer
 from client.session_store import SessionStore
 from client.ws_client import TableLightClient
 
@@ -47,7 +53,8 @@ logger = logging.getLogger(__name__)
 
 async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float,
                      overlay_manager: OverlayManager = None,
-                     program_runtime: ProgramRuntime = None):
+                     program_runtime: ProgramRuntime = None,
+                     latency_tracker=None):
     """Capture and send video frames at the specified FPS.
 
     When overlays are active, sends the last clean frame instead of
@@ -61,12 +68,18 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
     refresh_wait_frames = 0  # countdown after refresh request
     loop = asyncio.get_running_loop()
     while True:
+        lt = latency_tracker
+        if lt:
+            lt.begin("video_frame")
+
         # Run blocking camera capture in executor so it doesn't stall
         # the event loop (audio send/receive must keep flowing).
         jpeg_bytes, raw_frame, _ = await loop.run_in_executor(
             None, camera.get_rectified_frame
         )
         if not jpeg_bytes:
+            if lt:
+                lt.end("video_frame")
             await asyncio.sleep(interval)
             continue
 
@@ -83,6 +96,8 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
                 await client.send_video(jpeg_bytes)
                 overlay_manager.complete_refresh()
                 refresh_wait_frames = 0
+                if lt:
+                    lt.end("video_frame")
                 await asyncio.sleep(interval)
                 continue
 
@@ -103,6 +118,9 @@ async def video_loop(camera: CameraCapture, client: TableLightClient, fps: float
         # the async transport loop (slow tracking shouldn't delay frame sending).
         if program_runtime and raw_frame is not None:
             loop.run_in_executor(None, program_runtime.process_frame, raw_frame)
+
+        if lt:
+            lt.end("video_frame")
 
         await asyncio.sleep(interval)
 
@@ -220,6 +238,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Use white background instead of black (illuminates paper)",
     )
+    parser.add_argument(
+        "--debug-latency",
+        action="store_true",
+        help="Show live latency debug overlay on display",
+    )
     return parser.parse_args(argv)
 
 
@@ -240,8 +263,13 @@ async def main(args: argparse.Namespace | None = None):
     if args is None:
         args = parse_args()
 
+    # --- Latency tracker ---
+    latency_tracker = LatencyTracker() if args.debug_latency else None
+    _shared_state["latency_tracker"] = latency_tracker
+
     # --- Camera ---
-    camera = CameraCapture(url=args.url, webcam=args.webcam, rotate=args.rotate)
+    camera = CameraCapture(url=args.url, webcam=args.webcam, rotate=args.rotate,
+                           latency_tracker=latency_tracker)
     camera.start()
     # Flush stale frames from the MJPEG buffer so first capture is fresh.
     for _ in range(10):
@@ -261,7 +289,7 @@ async def main(args: argparse.Namespace | None = None):
     print("[TableLight] Session store ready.")
 
     # --- WebSocket client (created early so notify_fn can reference it) ---
-    client = TableLightClient(args.backend)
+    client = TableLightClient(args.backend, latency_tracker=latency_tracker)
 
     # Notification function: sends async updates to backend (and thus to Gemini).
     _event_loop = asyncio.get_running_loop()
@@ -311,6 +339,28 @@ async def main(args: argparse.Namespace | None = None):
     program_runtime._object_tracker = object_tracker
     _shared_state["program_runtime"] = program_runtime
 
+    # --- Music player ---
+    music_player = MusicPlayer(
+        session_store=session_store,
+        notify_fn=_send_notification,
+    )
+
+    # --- Video player & generator ---
+    video_player = VideoPlayer(overlay_manager)
+    video_generator = VideoGenerator(
+        overlay_manager=overlay_manager,
+        video_player=video_player,
+        session_store=session_store,
+        notify_fn=_send_notification,
+    )
+
+    # --- Code generator ---
+    code_generator = CodeGenerator(
+        session_store=session_store,
+        validate_fn=validate_code,
+        notify_fn=_send_notification,
+    )
+
     # --- Audio ---
     audio_capture = None
     audio_player = None
@@ -331,12 +381,12 @@ async def main(args: argparse.Namespace | None = None):
 
     async def on_tool_result(name: str, result: dict):
         overlay_manager.handle_tool_result(name, result)
-        content_type = result.get("content_type", "unknown")
-        title = result.get("title", "")
         # Register in overlay_state so get_overlay_state() reflects tool-created
         # overlays. We pass recomposite=False because handle_tool_result already
         # placed the overlay on canvas — we just need to track the metadata.
         if name == "project_overlay" and result.get("status") == "displayed":
+            content_type = result.get("content_type", "unknown")
+            title = result.get("title", "")
             placement = list(result.get("placement", [0, 0, 1000, 1000]))
             data = result.get("data", {})
             if content_type != "image":  # images register async after generation
@@ -352,6 +402,7 @@ async def main(args: argparse.Namespace | None = None):
                                           recomposite=False)
                 except Exception:
                     pass
+            print(f"[TableLight] Overlay projected: {content_type} — {title}")
         elif name == "advance_step" and result.get("status") == "advancing":
             overlay_name = result.get("overlay_name", "")
             step_number = result.get("step_number", 1)
@@ -363,7 +414,16 @@ async def main(args: argparse.Namespace | None = None):
                 overlay_state.add(
                     overlay_name, "steps", entry.placement,
                     entry.title, entry.data, new_img)
-        print(f"[TableLight] Overlay projected: {content_type} — {title}")
+        elif name == "flip_flashcard" and result.get("status") == "flipping":
+            overlay_name = result.get("overlay_name", "")
+            entry = overlay_state.get(overlay_name)
+            if entry and entry.content_type == "flashcard":
+                entry.data["show_back"] = not entry.data.get("show_back", False)
+                new_img = overlay_manager.render_overlay(
+                    "flashcard", entry.placement, entry.title, entry.data)
+                overlay_state.add(
+                    overlay_name, "flashcard", entry.placement,
+                    entry.title, entry.data, new_img)
 
     _last_direction = {"value": None}
 
@@ -389,6 +449,14 @@ async def main(args: argparse.Namespace | None = None):
         overlay_manager.request_refresh()
 
     async def on_run_program(name: str, code: str, description: str):
+        # If code is empty, load from session (e.g. after generate_code)
+        if not code:
+            code = session_store.load_program(name) or ""
+        if not code:
+            await client.send_notification(
+                "program", f"Program '{name}' not found — no code provided and nothing saved."
+            )
+            return
         status = program_runtime.run(name, code, description)
         print(f"[TableLight] Program '{name}' → {status.state}")
         if status.error:
@@ -418,6 +486,56 @@ async def main(args: argparse.Namespace | None = None):
         ]
         await client.send_notification("list_programs", json.dumps(programs, default=str))
 
+    async def on_play_music(name: str, prompt: str, bpm: int,
+                            temperature: float, guidance: float):
+        music_player.play(name, prompt, bpm, temperature, guidance)
+        print(f"[TableLight] Music starting: '{name}'")
+
+    async def on_stop_music(name: str):
+        music_player.stop()
+        print(f"[TableLight] Music stopped.")
+
+    async def on_pause_music():
+        music_player.pause()
+        print("[TableLight] Music paused.")
+
+    async def on_resume_music():
+        music_player.resume()
+        print("[TableLight] Music resumed.")
+
+    async def on_replay_music(name: str):
+        music_player.replay(name)
+        print(f"[TableLight] Replaying music: '{name}'")
+
+    async def on_generate_video(name: str, prompt: str, placement: list,
+                                duration: int, aspect_ratio: str):
+        video_generator.generate_async(name, prompt, placement, duration, aspect_ratio)
+        print(f"[TableLight] Video generation started: '{name}'")
+
+    async def on_play_video(name: str, placement: list, loop: bool):
+        path = session_store.get_video_path(name)
+        if path:
+            video_player.play(name, path, placement, loop)
+            print(f"[TableLight] Playing video: '{name}'")
+            await client.send_notification("system", f"Video '{name}' is now playing.")
+        else:
+            await client.send_notification("system", f"Video '{name}' not found in session.")
+
+    async def on_stop_video(name: str):
+        stopped = video_player.stop(name)
+        print(f"[TableLight] Stop video '{name}' → {'ok' if stopped else 'not found'}")
+        await client.send_notification("system", f"Video '{name}' stopped.")
+
+    async def on_generate_code(name: str, description: str, context: str):
+        code_generator.generate_async(name, description, context)
+        print(f"[TableLight] Code generation started: '{name}'")
+
+    async def on_get_session_manifest():
+        manifest = session_store.get_manifest()
+        await client.send_notification(
+            "session_manifest", json.dumps(manifest, default=str)
+        )
+
     client.on_audio(on_audio)
     client.on_tool_result(on_tool_result)
     client.on_transcript(on_transcript)
@@ -427,6 +545,16 @@ async def main(args: argparse.Namespace | None = None):
     client.on_stop_program(on_stop_program)
     client.on_get_overlay_state(on_get_overlay_state)
     client.on_list_programs(on_list_programs)
+    client.on_generate_code(on_generate_code)
+    client.on_play_music(on_play_music)
+    client.on_stop_music(on_stop_music)
+    client.on_pause_music(on_pause_music)
+    client.on_resume_music(on_resume_music)
+    client.on_replay_music(on_replay_music)
+    client.on_generate_video(on_generate_video)
+    client.on_play_video(on_play_video)
+    client.on_stop_video(on_stop_video)
+    client.on_get_session_manifest(on_get_session_manifest)
 
     # --- Connect ---
     print(f"[TableLight] Connecting to backend at {args.backend} ...")
@@ -435,7 +563,7 @@ async def main(args: argparse.Namespace | None = None):
 
     # --- Build task list (NO display_loop — OpenCV runs on main thread) ---
     tasks = [
-        asyncio.create_task(video_loop(camera, client, args.fps, overlay_manager, program_runtime), name="video"),
+        asyncio.create_task(video_loop(camera, client, args.fps, overlay_manager, program_runtime, latency_tracker=latency_tracker), name="video"),
         asyncio.create_task(client.receive_loop(), name="receive"),
     ]
 
@@ -541,7 +669,13 @@ def run():
         while async_thread.is_alive():
             om = _shared_state.get("overlay_manager")
             if om is not None:
-                canvas = om.canvas
+                canvas = om.canvas.copy() if args.debug_latency else om.canvas
+                # Composite latency debug overlay when enabled
+                lt = _shared_state.get("latency_tracker")
+                if lt and args.debug_latency:
+                    overlay = render_latency_overlay(lt, width=400, height=160)
+                    composite_debug_overlay(canvas, overlay, x=10, y=10)
+                    lt.log_stats_periodic(every_n=60)
                 if args.mode == "projector":
                     show_on_projector(win_name, canvas, fullscreen=True)
                 else:

@@ -119,7 +119,8 @@ def _clean_args(args: dict, func) -> dict:
     return {k: v for k, v in args.items() if k in valid}
 
 
-def execute_tool(function_name: str, args: dict, registry: dict) -> dict:
+def execute_tool(function_name: str, args: dict, registry: dict,
+                 latency_tracker=None) -> dict:
     """Look up and execute a tool function, returning its result dict.
 
     Strips unexpected kwargs before calling. Returns an error dict if the
@@ -130,8 +131,15 @@ def execute_tool(function_name: str, args: dict, registry: dict) -> dict:
         return {"status": "error", "message": f"Unknown tool: {function_name}"}
     try:
         clean = _clean_args(args, func)
-        return func(**clean)
+        if latency_tracker:
+            latency_tracker.begin("tool_exec")
+        result = func(**clean)
+        if latency_tracker:
+            latency_tracker.end("tool_exec")
+        return result
     except Exception as e:
+        if latency_tracker:
+            latency_tracker.end("tool_exec")
         logger.exception("Tool %s raised an exception", function_name)
         return {"status": "error", "message": str(e)}
 
@@ -399,6 +407,16 @@ async def session_endpoint(websocket: WebSocket) -> None:
                                     "stop_program",
                                     "list_programs",
                                     "get_overlay_state",
+                                    "generate_code",
+                                    "generate_video",
+                                    "play_video",
+                                    "stop_video",
+                                    "play_music",
+                                    "stop_music",
+                                    "pause_music",
+                                    "resume_music",
+                                    "replay_music",
+                                    "get_session_manifest",
                                 ):
                                     try:
                                         forward_msg = {
