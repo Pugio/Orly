@@ -1,0 +1,15 @@
+client/
+simulation/
+tests/
+calibration/
+poc/
+docs/
+.git/
+__pycache__/
+*.pyc
+.venv/
+.env
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

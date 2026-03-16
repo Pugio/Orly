@@ -14,19 +14,17 @@ set -euo pipefail
 # --- Validate required env vars ---
 if [[ -z "${GCP_PROJECT_ID:-}" ]]; then
     echo "ERROR: GCP_PROJECT_ID environment variable is required."
-    echo "Usage: GCP_PROJECT_ID=my-project ./infra/deploy.sh"
+    echo "Usage: GCP_PROJECT_ID=orly-490422 ./infra/deploy.sh"
     exit 1
 fi
 
 REGION="${GCP_REGION:-us-central1}"
 SERVICE="${SERVICE_NAME:-orly-backend}"
-IMAGE="gcr.io/${GCP_PROJECT_ID}/${SERVICE}"
 
 echo "=== Orly Backend Deployment ==="
 echo "Project:  ${GCP_PROJECT_ID}"
 echo "Region:   ${REGION}"
 echo "Service:  ${SERVICE}"
-echo "Image:    ${IMAGE}"
 echo ""
 
 # --- Set active project ---
@@ -37,25 +35,23 @@ echo "Enabling required APIs..."
 gcloud services enable \
     run.googleapis.com \
     cloudbuild.googleapis.com \
-    aiplatform.googleapis.com
+    aiplatform.googleapis.com \
+    artifactregistry.googleapis.com
 
-# --- Build the Docker image ---
-echo "Building Docker image..."
+# --- Deploy using Cloud Build (no local Docker required) ---
+# gcloud run deploy --source uses the Dockerfile at the repo root,
+# builds it remotely via Cloud Build, pushes to Artifact Registry,
+# and deploys to Cloud Run in one step.
+echo "Building and deploying via Cloud Build..."
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-docker build -t "${IMAGE}" -f "${REPO_ROOT}/infra/Dockerfile" "${REPO_ROOT}"
+cd "${REPO_ROOT}"
 
-# --- Push to Container Registry ---
-echo "Pushing image to GCR..."
-docker push "${IMAGE}"
-
-# --- Deploy to Cloud Run ---
-echo "Deploying to Cloud Run..."
 gcloud run deploy "${SERVICE}" \
-    --image "${IMAGE}" \
+    --source . \
     --region "${REGION}" \
     --platform managed \
     --session-affinity \
-    --min-instances=1 \
+    --min-instances=0 \
     --timeout=3600 \
     --allow-unauthenticated \
     --set-env-vars "GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION}"
