@@ -4,10 +4,14 @@ Uses gemini-3.1-flash-image-preview to generate images from text prompts.
 Falls back to a text annotation if generation fails.
 """
 
+import logging
+
 import cv2
 import numpy as np
 
 from client.genai_utils import get_genai_client
+
+logger = logging.getLogger(__name__)
 
 ENHANCE_PREFIX = (
     "The student has drawn something on their paper. Enhance and build upon "
@@ -156,21 +160,31 @@ def render_image(
             model="gemini-3.1-flash-image-preview",
             contents=contents,
             config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
+                # Must include both TEXT and IMAGE — the API returns empty
+                # parts if only IMAGE is specified (known API requirement).
+                response_modalities=["TEXT", "IMAGE"],
             ),
         )
 
-        # Safely extract image from response
+        # Safely extract image from response, with diagnostic logging.
         candidates = getattr(response, "candidates", None)
         if not candidates:
+            logger.warning("Image gen: no candidates. response=%s", response)
             return _fallback("[No candidates in response]", width, height)
 
-        content = getattr(candidates[0], "content", None)
+        candidate = candidates[0]
+        finish_reason = getattr(candidate, "finish_reason", None)
+        content = getattr(candidate, "content", None)
         if content is None:
+            logger.warning("Image gen: no content. finish_reason=%s", finish_reason)
             return _fallback("[No content in response]", width, height)
 
         parts = getattr(content, "parts", None)
         if not parts:
+            logger.warning(
+                "Image gen: no parts. finish_reason=%s, content=%s",
+                finish_reason, content,
+            )
             return _fallback("[No parts in response]", width, height)
 
         for part in parts:
@@ -182,11 +196,15 @@ def render_image(
                     return cv2.resize(img, (width, height),
                                       interpolation=cv2.INTER_AREA)
 
+        # Got parts but none contained image data — log what we did get.
+        part_types = [
+            getattr(p, "text", None) or type(p).__name__ for p in parts
+        ]
+        logger.warning("Image gen: no image in parts. types=%s", part_types)
         return _fallback(f"[No image in response] {prompt}", width, height)
 
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error("Image generation error: %s", e)
+        logger.error("Image generation error: %s", e)
         return _fallback(f"[Image gen failed] {prompt}", width, height)
 
 
