@@ -43,8 +43,37 @@ plus `np` (numpy), `cv2` (OpenCV), `math`, and `time`.
     objects enter/exit the zone.
 - table.remove_zone(name) — Remove a zone.
 
+### Paint Canvas (Direct Pixel Drawing)
+- table.create_canvas() — Create a PaintCanvas for direct pixel drawing.
+    Returns a PaintCanvas object. Black pixels are transparent (projector paradigm).
+    Canvas is automatically composited onto the projection each frame.
+    Methods on the canvas (all coords in 0-1000 normalised space):
+    - canvas.circle(center_y, center_x, radius, color, thickness=-1)
+    - canvas.line(y1, x1, y2, x2, color, thickness=2)
+    - canvas.rectangle(y1, x1, y2, x2, color, thickness=-1)
+    - canvas.text(text, y, x, color, scale=1.0, thickness=2)
+    - canvas.stamp(y, x, radius, color) — filled circle (for painting)
+    - canvas.clear() — reset to black (transparent)
+    - canvas.visible = True/False — toggle visibility
+
+### Color Analysis
+- table.get_dominant_color(region=None)
+    Get dominant BGR color from camera. region: (y, x, h, w) in pixels.
+    Returns (b, g, r) tuple or None.
+- table.get_object_size(name) — Returns (height, width) in 0-1000 coords or None.
+
+### Object Detection Helpers
+- table.wait_for_object_in_region(region, timeout=30, check_interval=0.2)
+    Wait for a non-background object to appear. region: (y, x, h, w) pixels.
+    Returns True/False.
+- table.wait_for_hands_clear(region, timeout=15, stable_time=1.0, check_interval=0.2)
+    Wait for a region to become stable (hands removed). Returns True/False.
+- table.init_color_tracking(name, region)
+    Capture current frame, extract color histogram from region, start CamShift
+    tracking. Returns dominant BGR color or None.
+
 ### Sound
-- table.play_tone(frequency, duration) — Play a sine wave tone.
+- table.play_tone(frequency, duration, volume=0.5) — Play a sine wave tone.
 
 ### Communication
 - table.notify(message) — Send a text notification back to the voice agent.

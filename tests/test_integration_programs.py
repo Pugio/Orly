@@ -44,6 +44,12 @@ class MockOverlayManager:
         h = max(1, int((ymax - ymin) / 1000.0 * self.proj_height))
         return np.full((h, w, 3), (0, 255, 255), dtype=np.uint8)
 
+    class _MockTransform:
+        def orient_overlay(self, overlay):
+            return overlay  # no rotation in tests
+
+    transform = _MockTransform()
+
     def place_on_canvas(self, overlay, placement):
         canvas = self.canvas.copy()
         ymin, xmin, ymax, xmax = placement
