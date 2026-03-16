@@ -18,20 +18,54 @@ ENHANCE_PREFIX = (
 
 
 def render_loading(prompt: str, width: int, height: int) -> np.ndarray:
-    """Render a loading/spinner placeholder while image generates.
+    """Render a static loading placeholder while image generates.
 
-    Shows a pulsing border and "Generating..." text on black background.
+    Shows a border and "Generating..." text on black background.
+    For animated loading, use render_loading_frame() instead.
+
+    Returns:
+        BGR numpy array (uint8) with shape (height, width, 3).
+    """
+    return render_loading_frame(0.0, width, height, prompt)
+
+
+def render_loading_frame(
+    elapsed: float, width: int, height: int, prompt: str
+) -> np.ndarray:
+    """Render one frame of the animated loading indicator.
+
+    Shows a cyan border, "Generating..." text, and a water-fill effect
+    that rises from the bottom over ~60 seconds.
+
+    Args:
+        elapsed: Seconds since generation started.
+        width: Frame width in pixels.
+        height: Frame height in pixels.
+        prompt: The generation prompt (displayed truncated).
 
     Returns:
         BGR numpy array (uint8) with shape (height, width, 3).
     """
     img = np.zeros((height, width, 3), dtype=np.uint8)
 
-    # Draw animated-looking border (dashed cyan rectangle)
-    color = (255, 255, 0)  # cyan in BGR
     thickness = max(2, min(width, height) // 60)
+    inset = thickness + 2  # inner edge of the border
+
+    # Water fill: rises from bottom over 60 seconds
+    fill_duration = 60.0
+    fill_frac = min(elapsed / fill_duration, 1.0) if elapsed > 0 else 0.0
+    fill_height = int((height - 2 * inset) * fill_frac)
+    if fill_height > 0:
+        # Dark teal water — visible on projector but doesn't overpower text
+        water_color = (160, 100, 20)  # BGR: dark cyan/teal
+        fill_top = height - inset - fill_height
+        img[fill_top : height - inset, inset : width - inset] = water_color
+
+    # Cyan border
+    border_color = (255, 255, 0)  # cyan in BGR
     cv2.rectangle(img, (thickness, thickness),
-                  (width - thickness, height - thickness), color, thickness)
+                  (width - thickness, height - thickness),
+                  border_color, thickness)
 
     # "Generating..." text centered
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -40,7 +74,7 @@ def render_loading(prompt: str, width: int, height: int) -> np.ndarray:
     (tw, th), _ = cv2.getTextSize(text, font, scale, 2)
     tx = (width - tw) // 2
     ty = (height + th) // 2
-    cv2.putText(img, text, (tx, ty), font, scale, color, 2, cv2.LINE_AA)
+    cv2.putText(img, text, (tx, ty), font, scale, border_color, 2, cv2.LINE_AA)
 
     # Show truncated prompt below
     prompt_display = prompt[:50] + "..." if len(prompt) > 50 else prompt
@@ -64,9 +98,9 @@ _STYLE_PROMPTS = {
         "Keep it clean, labeled, and educational. The diagram: {prompt}"
     ),
     "creative": (
-        "Generate a vivid, colorful illustration. Make it rich, detailed, "
-        "and appealing to a child. Use a style suitable for a children's "
-        "book or classroom poster. The image: {prompt}"
+        "Generate a simple children's image with a clear primary focus, large, "
+        "easy to parse elements, and not too much visual noise. "
+        "Use a style suitable for a children's book or classroom poster. The image: {prompt}"
     ),
 }
 
