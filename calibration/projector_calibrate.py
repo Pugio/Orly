@@ -421,9 +421,12 @@ def main():
         table_x, table_y = camera_to_table((cam_x, cam_y), H_cam)
         print(f"  Table coords: ({table_x:.1f}, {table_y:.1f})")
 
-        # Skip points outside the mat (0-1000 range with some tolerance)
-        if table_x < -50 or table_x > 1050 or table_y < -50 or table_y > 1050:
-            print(f"  WARNING: Table coords outside mat, skipping")
+        # Skip wildly implausible points (likely detection errors).
+        # Points outside the mat are fine — the projector often extends
+        # beyond the mat edges, and those correspondences are still
+        # valuable for computing an accurate homography.
+        if table_x < -2000 or table_x > 3000 or table_y < -2000 or table_y > 3000:
+            print(f"  WARNING: Table coords wildly out of range, skipping")
             continue
 
         table_points.append((table_x, table_y))

@@ -1,154 +1,218 @@
 """
-Projector calibration verification.
+Projector verification — tests the real overlay pipeline end-to-end.
 
-Loads H_proj from file and projects test patterns at known table coordinates
-so the user can visually check alignment.
+Uses OverlayManager with the same H_proj, mode, and rotation as the real
+system, so every pattern goes through orient_overlay → place_on_canvas.
+If it looks right here, it'll look right in production.
 
 Usage:
-    python projector_verify.py --homography projector_homography.npz
+    uv run python calibration/projector_verify.py --rotate 270
+    uv run python calibration/projector_verify.py --homography projector_homography.npz --rotate 270
 """
 
 import argparse
 import os
+import queue as queue_mod
 import sys
+import threading
 
 import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from calibration.projector_calibrate import table_to_projector
-from client.display import show_on_projector
+from client.display import show_on_projector, get_projector_resolution
+from client.overlay_manager import OverlayManager
 
 
-def create_verification_pattern(
-    proj_width: int,
-    proj_height: int,
-    H_proj: np.ndarray,
-) -> np.ndarray:
-    """Create a verification image with dots at known table coordinates.
-
-    Projects dots at a regular grid of table coordinates (every 200 units
-    in the 0-1000 space) so the user can check alignment against the
-    calibration mat.
-    """
-    img = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
-
-    # Grid of table coordinates to verify
-    table_coords = []
-    for ty in range(0, 1001, 200):
-        for tx in range(0, 1001, 200):
-            table_coords.append((float(tx), float(ty)))
-
-    for tx, ty in table_coords:
-        px, py = table_to_projector((tx, ty), H_proj)
-
-        # Skip if outside projector bounds
-        if px < 0 or px >= proj_width or py < 0 or py >= proj_height:
-            continue
-
-        # Draw dot — color-coded by position
-        # Corners: red, center: green, edges: blue
-        if (tx in (0, 1000)) and (ty in (0, 1000)):
-            color = (0, 0, 255)  # Red corners
-        elif tx == 500 and ty == 500:
-            color = (0, 255, 0)  # Green center
-        else:
-            color = (255, 200, 0)  # Cyan-ish for others
-
-        cv2.circle(img, (px, py), 8, color, -1)
-
-        # Label with table coordinates
-        label = f"({int(tx)},{int(ty)})"
-        cv2.putText(
-            img, label, (px + 12, py + 5),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1,
-        )
-
-    return img
+# ---------------------------------------------------------------------------
+# Pattern generators — each returns (description, content_type, placement, data)
+# that go through the real OverlayManager pipeline.
+# ---------------------------------------------------------------------------
 
 
-def create_crosshair_pattern(
-    proj_width: int,
-    proj_height: int,
-    H_proj: np.ndarray,
-) -> np.ndarray:
-    """Create a crosshair pattern at the table center (500, 500)."""
-    img = np.zeros((proj_height, proj_width, 3), dtype=np.uint8)
+def pattern_annotation():
+    """Text annotation — readable orientation check."""
+    return (
+        "Annotation — 'Hello from TableLight!' (should be human-readable)",
+        "annotation",
+        [200, 200, 800, 800],
+        {"text": "Hello from TableLight!"},
+        "Hello",
+    )
 
-    cx, cy = table_to_projector((500.0, 500.0), H_proj)
 
-    # Horizontal and vertical lines through center
-    line_color = (0, 255, 0)
-    cv2.line(img, (cx - 100, cy), (cx + 100, cy), line_color, 1)
-    cv2.line(img, (cx, cy - 100), (cx, cy + 100), line_color, 1)
-    cv2.circle(img, (cx, cy), 5, line_color, -1)
+def pattern_graph():
+    """Graph overlay rendered via matplotlib."""
+    return (
+        "Graph — y = x^2 - 3x + 2 (center of table)",
+        "graph",
+        [100, 100, 900, 900],
+        {"expression": "x**2 - 3*x + 2", "x_range": [-5, 5], "y_range": [-5, 10]},
+        "Graph",
+    )
 
-    # Corner markers
-    corners = [(0, 0), (1000, 0), (1000, 1000), (0, 1000)]
-    for tx, ty in corners:
-        px, py = table_to_projector((float(tx), float(ty)), H_proj)
-        if 0 <= px < proj_width and 0 <= py < proj_height:
-            cv2.drawMarker(
-                img, (px, py), (0, 0, 255),
-                cv2.MARKER_CROSS, 20, 2,
-            )
 
-    return img
+def pattern_markdown():
+    """Markdown with multiple lines — tests text orientation thoroughly."""
+    return (
+        "Markdown — multi-line text (all should read left-to-right)",
+        "markdown",
+        [50, 50, 950, 950],
+        {"text": "# Orientation Test\n\n- Line 1: **Human side** (bottom)\n- Line 2: Projector side (top)\n- If you can read this, orientation is correct!"},
+        "Orientation",
+    )
+
+
+def pattern_corners():
+    """Four annotations in each corner — tests placement + orientation."""
+    return [
+        ("Corner labels — TL=M0, TR=M3, BL=M1, BR=M2", [
+            ("annotation", [0, 0, 200, 300], {"text": "TL (M0)"}, "TL"),
+            ("annotation", [0, 700, 200, 1000], {"text": "TR (M3)"}, "TR"),
+            ("annotation", [800, 0, 1000, 300], {"text": "BL (M1)"}, "BL"),
+            ("annotation", [800, 700, 1000, 1000], {"text": "BR (M2)"}, "BR"),
+        ]),
+    ]
+
+
+def pattern_number_line():
+    """Number line — checks orientation of a different renderer."""
+    return (
+        "Number line — 0 to 10 (should read left-to-right)",
+        "number_line",
+        [300, 50, 700, 950],
+        {"min_val": 0, "max_val": 10, "points": [{"value": 3}, {"value": 5}, {"value": 7}]},
+        "NumLine",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Verify projector calibration")
+    parser = argparse.ArgumentParser(description="Projector verification via real overlay pipeline")
     parser.add_argument(
-        "--homography", type=str, default="projector_homography.npz",
+        "--homography", type=str, default=None,
         help="Path to projector homography .npz file",
     )
-    parser.add_argument("--proj-width", type=int, default=1280)
-    parser.add_argument("--proj-height", type=int, default=720)
+    parser.add_argument(
+        "--rotate", type=int, default=0, choices=[0, 90, 180, 270],
+        help="Camera rotation (must match --rotate used with client.main)",
+    )
     args = parser.parse_args()
 
-    # Load homography
-    data = np.load(args.homography)
-    H_proj = data["H_proj"]
-    print(f"Loaded H_proj from {args.homography}")
-    print(f"H_proj:\n{H_proj}")
+    # Auto-detect homography file
+    if args.homography is None:
+        for candidate in ["projector_homography.npz",
+                          os.path.join(os.path.dirname(__file__), "..", "projector_homography.npz")]:
+            if os.path.exists(candidate):
+                args.homography = candidate
+                break
 
-    # Use stored dimensions if available, otherwise use args
-    proj_width = int(data.get("proj_width", args.proj_width))
-    proj_height = int(data.get("proj_height", args.proj_height))
-    print(f"Projector resolution: {proj_width}x{proj_height}")
+    # Load calibration
+    H_proj = None
+    if args.homography:
+        data = np.load(args.homography)
+        H_proj = data["H_proj"]
+        proj_width = int(data.get("proj_width", 1280))
+        proj_height = int(data.get("proj_height", 720))
+        print(f"Loaded H_proj from {args.homography}")
+    else:
+        proj_width, proj_height = get_projector_resolution()
+        print("(No homography — using screen fallback mode)")
 
-    # Create verification patterns
-    grid_img = create_verification_pattern(proj_width, proj_height, H_proj)
-    crosshair_img = create_crosshair_pattern(proj_width, proj_height, H_proj)
+    mode = "projector" if H_proj is not None else "screen"
+    print(f"Resolution: {proj_width}x{proj_height}, mode: {mode}, rotate: {args.rotate}")
 
-    # Show on projector (extended display)
-    win_name = "Projector Verification"
+    # Build pattern list: each entry is (description, render_fn)
+    # render_fn takes an OverlayManager and draws on its canvas.
+
+    def _make_single_overlay(desc, content_type, placement, data, title):
+        def render(om):
+            overlay = om.render_overlay(content_type, placement, title, data)
+            om._show_overlay(overlay, placement)
+        return (desc, render)
+
+    def _make_multi_overlay(desc, items):
+        def render(om):
+            for content_type, placement, data, title in items:
+                overlay = om.render_overlay(content_type, placement, title, data)
+                om._show_overlay(overlay, placement)
+        return (desc, render)
+
     patterns = [
-        ("Grid pattern (dots at every 200 table units)", grid_img),
-        ("Crosshair at center + corner markers", crosshair_img),
+        _make_single_overlay(*pattern_annotation()),
+        _make_single_overlay(*pattern_graph()),
+        _make_single_overlay(*pattern_markdown()),
+        _make_single_overlay(*pattern_number_line()),
     ]
+
+    for desc, items in pattern_corners():
+        patterns.append(_make_multi_overlay(desc, items))
+
+    # --- Display loop ---
     current = 0
+    win_name = "Projector Verify"
 
-    print("\nControls:")
-    print("  SPACE / n — next pattern")
-    print("  p         — previous pattern")
-    print("  q         — quit")
-    print(f"\nShowing: {patterns[current][0]}")
+    def _render_current():
+        om = OverlayManager(
+            H_proj=H_proj,
+            proj_width=proj_width,
+            proj_height=proj_height,
+            mode=mode,
+            image_rotate=args.rotate,
+        )
+        patterns[current][1](om)
+        return om.canvas
 
-    show_on_projector(win_name, patterns[current][1], fullscreen=True)
+    print(f"\nPatterns ({len(patterns)}):")
+    for i, (name, _) in enumerate(patterns):
+        marker = " →" if i == current else "  "
+        print(f"  {marker} {i + 1}. {name}")
+
+    print(f"\nControls: n/ENTER = next, p = previous, q = quit")
+    print(f"Showing: {patterns[current][0]}")
+
+    show_on_projector(win_name, _render_current(), fullscreen=True)
+
+    # Threaded stdin reader — cv2.waitKey() doesn't capture input on macOS.
+    input_queue: queue_mod.Queue[str | None] = queue_mod.Queue()
+
+    def _stdin_reader():
+        try:
+            while True:
+                line = sys.stdin.readline()
+                if not line:
+                    input_queue.put(None)
+                    break
+                input_queue.put(line.strip().lower())
+        except Exception:
+            input_queue.put(None)
+
+    reader = threading.Thread(target=_stdin_reader, daemon=True)
+    reader.start()
 
     while True:
-        key = cv2.waitKey(0) & 0xFF
-        if key == ord("q"):
+        cv2.waitKey(50)
+        try:
+            cmd = input_queue.get_nowait()
+        except queue_mod.Empty:
+            continue
+
+        if cmd is None or cmd == "q":
             break
-        elif key in (ord(" "), ord("n")):
+        elif cmd in ("n", ""):
             current = (current + 1) % len(patterns)
-            print(f"Showing: {patterns[current][0]}")
-            show_on_projector(win_name, patterns[current][1])
-        elif key == ord("p"):
+        elif cmd == "p":
             current = (current - 1) % len(patterns)
-            print(f"Showing: {patterns[current][0]}")
-            show_on_projector(win_name, patterns[current][1])
+        else:
+            print(f"  Unknown command '{cmd}'. Use n/p/q.")
+            continue
+
+        print(f"Showing: {patterns[current][0]}")
+        show_on_projector(win_name, _render_current())
 
     cv2.destroyAllWindows()
     print("Done.")
