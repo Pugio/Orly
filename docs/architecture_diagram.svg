@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="1" dy="2" stdDeviation="3" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748B"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#D97706"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="700" fill="#FAFBFC" rx="0"/>
+
+  <!-- Title -->
+  <text x="600" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#1E293B">TableLight — Projected AR Tutoring System</text>
+  <text x="600" y="56" text-anchor="middle" font-size="12" fill="#94A3B8">Camera → Gemini Live → Projector overlay on physical desk</text>
+
+  <!-- ===== CLOUD SECTION (left) ===== -->
+  <rect x="30" y="72" width="420" height="410" rx="14" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="96" text-anchor="middle" font-size="13" font-weight="700" fill="#1D4ED8">☁  Google Cloud Run</text>
+
+  <!-- FastAPI box -->
+  <rect x="55" y="112" width="370" height="52" rx="8" fill="#3B82F6" filter="url(#shadow)"/>
+  <text x="240" y="135" text-anchor="middle" font-size="13" font-weight="600" fill="#fff">FastAPI WebSocket Server</text>
+  <text x="240" y="152" text-anchor="middle" font-size="10" fill="#DBEAFE">uvicorn · binary + JSON multiplexing</text>
+
+  <!-- Gemini Live box -->
+  <rect x="55" y="176" width="370" height="68" rx="8" fill="#2563EB" filter="url(#shadow)"/>
+  <text x="240" y="200" text-anchor="middle" font-size="13" font-weight="600" fill="#fff">Gemini 2.5 Flash — Live API</text>
+  <text x="240" y="217" text-anchor="middle" font-size="10" fill="#BFDBFE">client.aio.live.connect() · bidirectional streaming</text>
+  <text x="240" y="232" text-anchor="middle" font-size="10" fill="#BFDBFE">session resumption · context compression</text>
+
+  <!-- Tool boxes row -->
+  <rect x="55" y="258" width="115" height="48" rx="7" fill="#1D4ED8" filter="url(#shadow)"/>
+  <text x="112" y="279" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Overlay Tools</text>
+  <text x="112" y="294" text-anchor="middle" font-size="9" fill="#93C5FD">project · clear · flip</text>
+
+  <rect x="182" y="258" width="115" height="48" rx="7" fill="#1D4ED8" filter="url(#shadow)"/>
+  <text x="239" y="279" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Media Tools</text>
+  <text x="239" y="294" text-anchor="middle" font-size="9" fill="#93C5FD">music · video · image</text>
+
+  <rect x="309" y="258" width="115" height="48" rx="7" fill="#1D4ED8" filter="url(#shadow)"/>
+  <text x="366" y="279" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Code Gen</text>
+  <text x="366" y="294" text-anchor="middle" font-size="9" fill="#93C5FD">programs · TableAPI</text>
+
+  <!-- SDK details -->
+  <rect x="55" y="320" width="370" height="52" rx="8" fill="#3B82F6" filter="url(#shadow)"/>
+  <text x="240" y="342" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Raw google-genai SDK (not ADK)</text>
+  <text x="240" y="358" text-anchor="middle" font-size="10" fill="#DBEAFE">Separate audio + video streams · no FIFO serialisation</text>
+
+  <!-- Audio/video input labels -->
+  <rect x="55" y="386" width="178" height="38" rx="7" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1"/>
+  <text x="144" y="404" text-anchor="middle" font-size="10" fill="#1E40AF">↑ Audio in (PCM 16kHz)</text>
+  <text x="144" y="416" text-anchor="middle" font-size="9" fill="#3B82F6">0x01 prefix</text>
+
+  <rect x="247" y="386" width="178" height="38" rx="7" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1"/>
+  <text x="336" y="404" text-anchor="middle" font-size="10" fill="#1E40AF">↑ Video in (JPEG)</text>
+  <text x="336" y="416" text-anchor="middle" font-size="9" fill="#3B82F6">0x02 prefix</text>
+
+  <rect x="55" y="432" width="370" height="30" rx="7" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1"/>
+  <text x="240" y="452" text-anchor="middle" font-size="10" fill="#1E40AF">↓ Audio out (PCM 24kHz, 0x03) · JSON tool results · transcripts</text>
+
+  <!-- ===== DASHED BOUNDARY ===== -->
+  <line x1="470" y1="80" x2="470" y2="472" stroke="#94A3B8" stroke-width="2" stroke-dasharray="8,5"/>
+  <text x="470" y="486" text-anchor="middle" font-size="10" font-weight="600" fill="#94A3B8">WebSocket</text>
+  <text x="470" y="498" text-anchor="middle" font-size="9" fill="#94A3B8">binary + JSON</text>
+
+  <!-- bidirectional arrows across boundary -->
+  <line x1="430" y1="140" x2="510" y2="140" stroke="#3B82F6" stroke-width="2" marker-start="url(#arrowBlue)" marker-end="url(#arrowBlue)"/>
+
+  <!-- ===== EDGE CLIENT (right) ===== -->
+  <rect x="510" y="72" width="420" height="410" rx="14" fill="#ECFDF5" stroke="#A7F3D0" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="720" y="96" text-anchor="middle" font-size="13" font-weight="700" fill="#047857">🖥  Edge Client — Local Python</text>
+
+  <!-- Camera + Audio input -->
+  <rect x="535" y="112" width="178" height="52" rx="8" fill="#10B981" filter="url(#shadow)"/>
+  <text x="624" y="134" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Camera Capture</text>
+  <text x="624" y="150" text-anchor="middle" font-size="9.5" fill="#D1FAE5">IP Webcam / local · JPEG</text>
+
+  <rect x="727" y="112" width="178" height="52" rx="8" fill="#10B981" filter="url(#shadow)"/>
+  <text x="816" y="134" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Audio I/O</text>
+  <text x="816" y="150" text-anchor="middle" font-size="9.5" fill="#D1FAE5">Mic 16kHz · Speaker 24kHz</text>
+
+  <!-- ArUco + Homography -->
+  <rect x="535" y="176" width="370" height="48" rx="8" fill="#059669" filter="url(#shadow)"/>
+  <text x="720" y="198" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">ArUco Detection + Homography (OpenCV)</text>
+  <text x="720" y="214" text-anchor="middle" font-size="10" fill="#A7F3D0">cached on last-good · brief occlusion tolerant</text>
+
+  <!-- Overlay rendering -->
+  <rect x="535" y="236" width="370" height="52" rx="8" fill="#10B981" filter="url(#shadow)"/>
+  <text x="720" y="258" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">Overlay Rendering Engine</text>
+  <text x="720" y="275" text-anchor="middle" font-size="10" fill="#D1FAE5">matplotlib · 12+ renderer types · black bg (projector transparent)</text>
+
+  <!-- State + Programs row -->
+  <rect x="535" y="300" width="178" height="48" rx="7" fill="#047857" filter="url(#shadow)"/>
+  <text x="624" y="320" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Named Overlays</text>
+  <text x="624" y="335" text-anchor="middle" font-size="9" fill="#6EE7B7">CRUD · JSON · ASCII grid</text>
+
+  <rect x="727" y="300" width="178" height="48" rx="7" fill="#047857" filter="url(#shadow)"/>
+  <text x="816" y="320" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Session Storage</text>
+  <text x="816" y="335" text-anchor="middle" font-size="9" fill="#6EE7B7">images · programs · music</text>
+
+  <!-- Program runtime + Object tracker -->
+  <rect x="535" y="360" width="178" height="48" rx="7" fill="#10B981" filter="url(#shadow)"/>
+  <text x="624" y="381" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Program Runtime</text>
+  <text x="624" y="396" text-anchor="middle" font-size="9" fill="#D1FAE5">sandboxed exec · TableAPI</text>
+
+  <rect x="727" y="360" width="178" height="48" rx="7" fill="#10B981" filter="url(#shadow)"/>
+  <text x="816" y="381" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Object Tracker</text>
+  <text x="816" y="396" text-anchor="middle" font-size="9" fill="#D1FAE5">CamShift · template · zones</text>
+
+  <!-- Projector output -->
+  <rect x="535" y="420" width="370" height="48" rx="8" fill="#059669" filter="url(#shadow)"/>
+  <text x="720" y="442" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">Projector Output via Calibrated Homography</text>
+  <text x="720" y="457" text-anchor="middle" font-size="10" fill="#A7F3D0">warpPerspective · screen fallback mode</text>
+
+  <!-- ===== PHYSICAL WORLD (bottom) ===== -->
+  <rect x="140" y="520" width="920" height="100" rx="14" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="600" y="544" text-anchor="middle" font-size="13" font-weight="700" fill="#B45309">🌍  Physical World</text>
+
+  <rect x="165" y="556" width="140" height="48" rx="8" fill="#F59E0B" filter="url(#shadow)"/>
+  <text x="235" y="576" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">👤 Student</text>
+  <text x="235" y="592" text-anchor="middle" font-size="9.5" fill="#FEF3C7">voice + materials</text>
+
+  <rect x="325" y="556" width="170" height="48" rx="8" fill="#F59E0B" filter="url(#shadow)"/>
+  <text x="410" y="576" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">📋 Calibration Mat</text>
+  <text x="410" y="592" text-anchor="middle" font-size="9.5" fill="#FEF3C7">ArUco markers · table</text>
+
+  <rect x="515" y="556" width="160" height="48" rx="8" fill="#F59E0B" filter="url(#shadow)"/>
+  <text x="595" y="576" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">📱 Smartphone</text>
+  <text x="595" y="592" text-anchor="middle" font-size="9.5" fill="#FEF3C7">IP Webcam camera</text>
+
+  <rect x="695" y="556" width="160" height="48" rx="8" fill="#F59E0B" filter="url(#shadow)"/>
+  <text x="775" y="576" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">📽 Mini Projector</text>
+  <text x="775" y="592" text-anchor="middle" font-size="9.5" fill="#FEF3C7">adds light · black=clear</text>
+
+  <rect x="875" y="556" width="160" height="48" rx="8" fill="#D97706" filter="url(#shadow)"/>
+  <text x="955" y="576" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">🔊 Speakers</text>
+  <text x="955" y="592" text-anchor="middle" font-size="9.5" fill="#FEF3C7">Gemini voice output</text>
+
+  <!-- Arrows: physical → edge -->
+  <line x1="595" y1="556" x2="624" y2="168" stroke="#D97706" stroke-width="1.5" marker-end="url(#arrowOrange)"/>
+  <text x="586" y="510" font-size="9" fill="#92400E" transform="rotate(-80,586,510)">JPEG frames</text>
+
+  <line x1="235" y1="556" x2="816" y2="168" stroke="#D97706" stroke-width="1.5" marker-end="url(#arrowOrange)"/>
+  <text x="470" y="510" font-size="9" fill="#92400E" transform="rotate(-50,470,510)">voice (PCM)</text>
+
+  <!-- Arrow: edge → projector -->
+  <line x1="775" y1="556" x2="750" y2="472" stroke="#047857" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="780" y="516" font-size="9" fill="#047857">overlays</text>
+
+  <!-- Arrow: edge → speakers -->
+  <line x1="955" y1="556" x2="850" y2="472" stroke="#047857" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="920" y="516" font-size="9" fill="#047857">audio</text>
+
+  <!-- ===== COORDINATE MAPPING CALLOUT ===== -->
+  <rect x="960" y="72" width="220" height="120" rx="10" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="4,3" filter="url(#shadow)"/>
+  <text x="1070" y="93" text-anchor="middle" font-size="11" font-weight="700" fill="#334155">🗺 Coordinate Mapping</text>
+
+  <text x="980" y="114" font-size="10" fill="#475569">Camera px</text>
+  <text x="1048" y="114" font-size="10" font-weight="600" fill="#3B82F6">→ H_cam →</text>
+  <text x="1120" y="114" font-size="10" fill="#475569">Table</text>
+
+  <text x="1070" y="134" text-anchor="middle" font-size="14" font-weight="700" fill="#1E293B">(0 – 1000)</text>
+
+  <text x="1070" y="150" text-anchor="middle" font-size="9" fill="#64748B">= Gemini bbox coordinate system</text>
+
+  <text x="980" y="170" font-size="10" fill="#475569">Table</text>
+  <text x="1020" y="170" font-size="10" font-weight="600" fill="#10B981">→ H_proj →</text>
+  <text x="1100" y="170" font-size="10" fill="#475569">Projector px</text>
+
+  <!-- ===== LEGEND ===== -->
+  <rect x="960" y="206" width="220" height="80" rx="10" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
+  <text x="1070" y="226" text-anchor="middle" font-size="10" font-weight="700" fill="#334155">Legend</text>
+  <rect x="978" y="236" width="12" height="12" rx="3" fill="#3B82F6"/>
+  <text x="998" y="247" font-size="10" fill="#475569">Cloud (GCP)</text>
+  <rect x="978" y="254" width="12" height="12" rx="3" fill="#10B981"/>
+  <text x="998" y="265" font-size="10" fill="#475569">Edge Client</text>
+  <rect x="1078" y="236" width="12" height="12" rx="3" fill="#F59E0B"/>
+  <text x="1098" y="247" font-size="10" fill="#475569">Physical</text>
+  <line x1="1078" y1="262" x2="1108" y2="262" stroke="#94A3B8" stroke-width="2" stroke-dasharray="5,3"/>
+  <text x="1116" y="265" font-size="10" fill="#475569">WS</text>
+
+  <!-- Footer -->
+  <text x="600" y="690" text-anchor="middle" font-size="10" fill="#94A3B8">TableLight · Gemini Live Agent Challenge 2026 · Projected AR Tutoring</text>
+</svg>

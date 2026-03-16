@@ -23,3 +23,17 @@ gemini_view*.jpg
 .claude/
 .specstory/
 claude-review-loop
+CLAUDE.md
+
+# Dev notes / scratch files (not for public repo)
+2026-*.md
+NEXT_ROUND_SPEC.md
+docs/2026-*.md
+
+# OS files
+.DS_Store
+*/.DS_Store
+
+# Programs runtime
+programs/
+docs/blog_post.md
