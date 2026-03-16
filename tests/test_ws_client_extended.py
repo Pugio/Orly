@@ -34,7 +34,6 @@ class TestTableLightClientInit:
         assert c._on_tool_result is None
         assert c._on_transcript is None
         assert c._on_interrupted is None
-        assert c._on_refresh_view is None
 
 
 # ---------------------------------------------------------------------------
@@ -96,11 +95,13 @@ class TestCallbackRegistration:
         c.on_interrupted(cb)
         assert c._on_interrupted is cb
 
-    def test_on_refresh_view_registers(self):
+    def test_only_four_callbacks(self):
+        """After refactor, only 4 callback slots remain."""
         c = TableLightClient("ws://localhost:8000/ws")
-        cb = AsyncMock()
-        c.on_refresh_view(cb)
-        assert c._on_refresh_view is cb
+        assert hasattr(c, "_on_audio")
+        assert hasattr(c, "_on_tool_result")
+        assert hasattr(c, "_on_transcript")
+        assert hasattr(c, "_on_interrupted")
 
 
 # ---------------------------------------------------------------------------
@@ -216,25 +217,9 @@ class _MockAsyncIterator:
         return msg
 
 
-class TestReceiveLoopRefreshView:
-    async def test_refresh_view_dispatched(self):
-        c = TableLightClient("ws://localhost:8000/ws")
-        called = []
-
-        async def on_refresh():
-            called.append(True)
-
-        c.on_refresh_view(on_refresh)
-        msg = json.dumps({
-            "type": "tool_result",
-            "name": "refresh_view",
-            "result": {"status": "refreshing"},
-        })
-        c.ws = _MockAsyncIterator([msg])
-        await c.receive_loop()
-        assert called == [True]
-
-    async def test_tool_result_not_refresh_goes_to_on_tool(self):
+class TestReceiveLoopToolResult:
+    async def test_all_tool_results_go_to_on_tool_result(self):
+        """All tool_result messages dispatch via on_tool_result."""
         c = TableLightClient("ws://localhost:8000/ws")
         results = []
 
@@ -242,15 +227,23 @@ class TestReceiveLoopRefreshView:
             results.append((name, result))
 
         c.on_tool_result(on_tool)
-        msg = json.dumps({
-            "type": "tool_result",
-            "name": "project_overlay",
-            "result": {"content_type": "graph"},
-        })
-        c.ws = _MockAsyncIterator([msg])
+        msgs = [
+            json.dumps({
+                "type": "tool_result",
+                "name": "query",
+                "result": {"target": "fresh_view", "status": "refreshing"},
+            }),
+            json.dumps({
+                "type": "tool_result",
+                "name": "overlay",
+                "result": {"action": "create", "content_type": "graph"},
+            }),
+        ]
+        c.ws = _MockAsyncIterator(msgs)
         await c.receive_loop()
-        assert len(results) == 1
-        assert results[0][0] == "project_overlay"
+        assert len(results) == 2
+        assert results[0][0] == "query"
+        assert results[1][0] == "overlay"
 
 
 class TestReceiveLoopMultipleMessages:

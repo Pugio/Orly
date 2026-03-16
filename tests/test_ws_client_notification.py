@@ -1,7 +1,7 @@
-"""Tests for client-side WebSocket notification extensions.
+"""Tests for client-side WebSocket notification and unified tool_result dispatch.
 
-Tests send_notification and receive_loop handling for run_program,
-stop_program, and get_overlay_state messages.
+Tests send_notification and receive_loop handling for consolidated tool names
+(overlay, query, music) via the single on_tool_result callback.
 """
 
 import json
@@ -64,70 +64,65 @@ class TestSendNotification:
 
 
 # ---------------------------------------------------------------------------
-# receive_loop — run_program
+# receive_loop — tool_result dispatch (consolidated names)
 # ---------------------------------------------------------------------------
 
 
-class TestReceiveRunProgram:
-    async def test_receive_run_program(self):
+class TestReceiveToolResult:
+    async def test_overlay_tool_result(self):
         c = TableLightClient("ws://localhost:8000/ws")
         calls = []
 
-        async def on_run(name, code, description):
-            calls.append((name, code, description))
+        async def on_tool(name, result):
+            calls.append((name, result))
 
-        c.on_run_program(on_run)
+        c.on_tool_result(on_tool)
         msg = json.dumps({
-            "type": "run_program",
-            "name": "tracker",
-            "code": "print('hi')",
-            "description": "A tracker",
+            "type": "tool_result",
+            "name": "overlay",
+            "result": {"action": "create", "status": "displayed", "content_type": "graph"},
         })
         c.ws = _MockAsyncIterator([msg])
         await c.receive_loop()
         assert len(calls) == 1
-        assert calls[0] == ("tracker", "print('hi')", "A tracker")
+        assert calls[0][0] == "overlay"
+        assert calls[0][1]["action"] == "create"
 
-
-# ---------------------------------------------------------------------------
-# receive_loop — stop_program
-# ---------------------------------------------------------------------------
-
-
-class TestReceiveStopProgram:
-    async def test_receive_stop_program(self):
+    async def test_query_tool_result(self):
         c = TableLightClient("ws://localhost:8000/ws")
         calls = []
 
-        async def on_stop(name):
-            calls.append(name)
+        async def on_tool(name, result):
+            calls.append((name, result))
 
-        c.on_stop_program(on_stop)
-        msg = json.dumps({"type": "stop_program", "name": "tracker"})
+        c.on_tool_result(on_tool)
+        msg = json.dumps({
+            "type": "tool_result",
+            "name": "query",
+            "result": {"target": "fresh_view", "status": "refreshing"},
+        })
         c.ws = _MockAsyncIterator([msg])
         await c.receive_loop()
-        assert calls == ["tracker"]
+        assert len(calls) == 1
+        assert calls[0][0] == "query"
 
-
-# ---------------------------------------------------------------------------
-# receive_loop — get_overlay_state
-# ---------------------------------------------------------------------------
-
-
-class TestReceiveGetOverlayState:
-    async def test_receive_get_overlay_state(self):
+    async def test_music_tool_result(self):
         c = TableLightClient("ws://localhost:8000/ws")
         calls = []
 
-        async def on_get():
-            calls.append(True)
-            return {"overlays": [], "count": 0}
+        async def on_tool(name, result):
+            calls.append((name, result))
 
-        c.on_get_overlay_state(on_get)
-        msg = json.dumps({"type": "get_overlay_state"})
+        c.on_tool_result(on_tool)
+        msg = json.dumps({
+            "type": "tool_result",
+            "name": "music",
+            "result": {"action": "play", "status": "starting", "name": "chill"},
+        })
         c.ws = _MockAsyncIterator([msg])
         await c.receive_loop()
-        assert calls == [True]
+        assert len(calls) == 1
+        assert calls[0][0] == "music"
 
 
 # ---------------------------------------------------------------------------
@@ -137,12 +132,12 @@ class TestReceiveGetOverlayState:
 
 class TestCallbacksNotRegistered:
     async def test_callbacks_not_registered(self):
-        """Receiving new message types without callbacks should not crash."""
+        """Receiving tool_result without callbacks should not crash."""
         c = TableLightClient("ws://localhost:8000/ws")
         msgs = [
-            json.dumps({"type": "run_program", "name": "x", "code": "pass", "description": ""}),
-            json.dumps({"type": "stop_program", "name": "x"}),
-            json.dumps({"type": "get_overlay_state"}),
+            json.dumps({"type": "tool_result", "name": "overlay", "result": {"action": "create"}}),
+            json.dumps({"type": "tool_result", "name": "music", "result": {"action": "play"}}),
+            json.dumps({"type": "tool_result", "name": "query", "result": {"target": "fresh_view"}}),
         ]
         c.ws = _MockAsyncIterator(msgs)
         await c.receive_loop()  # should not raise

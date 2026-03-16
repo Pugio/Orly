@@ -27,21 +27,6 @@ class TableLightClient:
         self._on_tool_result = None     # async def(name, result)
         self._on_transcript = None      # async def(direction, text)
         self._on_interrupted = None     # async def()
-        self._on_refresh_view = None    # async def()
-        self._on_run_program = None     # async def(name, code, description)
-        self._on_stop_program = None    # async def(name)
-        self._on_get_overlay_state = None  # async def() -> dict
-        self._on_list_programs = None       # async def()
-        self._on_generate_code = None      # async def(name, description, context)
-        self._on_generate_video = None     # async def(name, prompt, placement, duration, aspect_ratio)
-        self._on_play_video = None         # async def(name, placement, loop)
-        self._on_stop_video = None         # async def(name)
-        self._on_play_music = None         # async def(name, prompt, bpm, temperature, guidance)
-        self._on_stop_music = None         # async def(name)
-        self._on_pause_music = None        # async def()
-        self._on_resume_music = None       # async def()
-        self._on_replay_music = None       # async def(name)
-        self._on_get_session_manifest = None  # async def()
 
     async def connect(self, text_only: bool = False):
         """Connect to backend WebSocket.
@@ -99,65 +84,6 @@ class TableLightClient:
     def on_interrupted(self, callback):
         self._on_interrupted = callback
 
-    def on_refresh_view(self, callback):
-        self._on_refresh_view = callback
-
-    def on_run_program(self, callback):
-        """Register callback for program execution requests. callback(name, code, description)"""
-        self._on_run_program = callback
-
-    def on_stop_program(self, callback):
-        """Register callback for program stop requests. callback(name)"""
-        self._on_stop_program = callback
-
-    def on_get_overlay_state(self, callback):
-        """Register callback for overlay state queries. callback() -> dict"""
-        self._on_get_overlay_state = callback
-
-    def on_list_programs(self, callback):
-        """Register callback for program list queries. callback()"""
-        self._on_list_programs = callback
-
-    def on_generate_code(self, callback):
-        """Register callback for code generation requests. callback(name, description, context)"""
-        self._on_generate_code = callback
-
-    def on_generate_video(self, callback):
-        """Register callback for video generation. callback(name, prompt, placement, duration, aspect_ratio)"""
-        self._on_generate_video = callback
-
-    def on_play_video(self, callback):
-        """Register callback for video playback. callback(name, placement, loop)"""
-        self._on_play_video = callback
-
-    def on_stop_video(self, callback):
-        """Register callback for stopping video. callback(name)"""
-        self._on_stop_video = callback
-
-    def on_play_music(self, callback):
-        """Register callback for music playback. callback(name, prompt, bpm, temperature, guidance)"""
-        self._on_play_music = callback
-
-    def on_stop_music(self, callback):
-        """Register callback for stopping music. callback(name)"""
-        self._on_stop_music = callback
-
-    def on_pause_music(self, callback):
-        """Register callback for pausing music. callback()"""
-        self._on_pause_music = callback
-
-    def on_resume_music(self, callback):
-        """Register callback for resuming music. callback()"""
-        self._on_resume_music = callback
-
-    def on_replay_music(self, callback):
-        """Register callback for replaying saved music. callback(name)"""
-        self._on_replay_music = callback
-
-    def on_get_session_manifest(self, callback):
-        """Register callback for session manifest queries. callback()"""
-        self._on_get_session_manifest = callback
-
     async def send_notification(self, source: str, text: str) -> None:
         """Send an async notification to the backend."""
         if not self.connected:
@@ -169,6 +95,8 @@ class TableLightClient:
         """Receive and dispatch messages from backend.
 
         Handles both binary frames (audio) and text frames (JSON).
+        All tool results (overlay, query, music) are dispatched through
+        the single on_tool_result callback.
         """
         try:
             async for raw in self.ws:
@@ -190,68 +118,13 @@ class TableLightClient:
                 msg_type = msg.get("type")
 
                 if msg_type == "tool_result":
-                    name = msg["name"]
-                    if name == "refresh_view" and self._on_refresh_view:
-                        await self._on_refresh_view()
-                    elif self._on_tool_result:
-                        await self._on_tool_result(name, msg["result"])
+                    if self._on_tool_result:
+                        await self._on_tool_result(msg["name"], msg["result"])
                 elif msg_type in ("transcript_in", "transcript_out") and self._on_transcript:
                     direction = "in" if msg_type == "transcript_in" else "out"
                     await self._on_transcript(direction, msg["text"])
                 elif msg_type == "interrupted" and self._on_interrupted:
                     await self._on_interrupted()
-                elif msg_type == "run_program" and self._on_run_program:
-                    await self._on_run_program(
-                        msg.get("name", ""),
-                        msg.get("code", ""),
-                        msg.get("description", ""),
-                    )
-                elif msg_type == "stop_program" and self._on_stop_program:
-                    await self._on_stop_program(msg.get("name", ""))
-                elif msg_type == "get_overlay_state" and self._on_get_overlay_state:
-                    await self._on_get_overlay_state()
-                elif msg_type == "list_programs" and self._on_list_programs:
-                    await self._on_list_programs()
-                elif msg_type == "generate_code" and self._on_generate_code:
-                    await self._on_generate_code(
-                        msg.get("name", ""),
-                        msg.get("description", ""),
-                        msg.get("context", ""),
-                    )
-                elif msg_type == "generate_video" and self._on_generate_video:
-                    await self._on_generate_video(
-                        msg.get("name", ""),
-                        msg.get("prompt", ""),
-                        msg.get("placement", [0, 0, 1000, 1000]),
-                        msg.get("duration", 5),
-                        msg.get("aspect_ratio", "16:9"),
-                    )
-                elif msg_type == "play_video" and self._on_play_video:
-                    await self._on_play_video(
-                        msg.get("name", ""),
-                        msg.get("placement", [0, 0, 1000, 1000]),
-                        msg.get("loop", False),
-                    )
-                elif msg_type == "stop_video" and self._on_stop_video:
-                    await self._on_stop_video(msg.get("name", ""))
-                elif msg_type == "play_music" and self._on_play_music:
-                    await self._on_play_music(
-                        msg.get("name", ""),
-                        msg.get("prompt", ""),
-                        msg.get("bpm", 120),
-                        msg.get("temperature", 1.0),
-                        msg.get("guidance", 3.0),
-                    )
-                elif msg_type == "stop_music" and self._on_stop_music:
-                    await self._on_stop_music(msg.get("name", ""))
-                elif msg_type == "pause_music" and self._on_pause_music:
-                    await self._on_pause_music()
-                elif msg_type == "resume_music" and self._on_resume_music:
-                    await self._on_resume_music()
-                elif msg_type == "replay_music" and self._on_replay_music:
-                    await self._on_replay_music(msg.get("name", ""))
-                elif msg_type == "get_session_manifest" and self._on_get_session_manifest:
-                    await self._on_get_session_manifest()
 
                 if lt:
                     lt.end("ws_dispatch")
