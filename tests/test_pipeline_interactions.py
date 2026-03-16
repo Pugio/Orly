@@ -14,14 +14,12 @@ import itertools
 import threading
 import time
 from dataclasses import dataclass
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from client.overlay_manager import OverlayManager
 from client.overlay_state import OverlayStateManager
-from client.program_runtime import ProgramRuntime
 
 
 # ===========================================================================
@@ -45,7 +43,6 @@ class PipelineHarness:
         )
         self.osm = OverlayStateManager(self.om)
         self.om.overlay_state = self.osm
-        self.runtime = ProgramRuntime(table_api_factory=lambda: MagicMock())
         # Track which overlays we think should exist (model state)
         self._expected_overlays: set[str] = set()
         # Track generation_id at time of async image start
@@ -126,15 +123,12 @@ class PipelineHarness:
             violations.append(
                 f"generation_id is negative: {self.om._generation_id}")
 
-        # Invariant 4: after clear(), refresh state should be clean
-        # (can't check this dynamically, tested separately)
-
-        # Invariant 5: overlay_state names match expected model
+        # Invariant 4: overlay_state names match expected model
         if names != self._expected_overlays:
             violations.append(
                 f"State mismatch: got {names}, expected {self._expected_overlays}")
 
-        # Invariant 6: _saved_canvas should be None when not refreshing
+        # Invariant 5: _saved_canvas should be None when not refreshing
         if not self.om._refresh_requested and self.om._saved_canvas is not None:
             violations.append(
                 "_saved_canvas is not None but no refresh in progress")
@@ -142,8 +136,8 @@ class PipelineHarness:
         return violations
 
     def cleanup(self):
-        """Stop all programs for clean teardown."""
-        self.runtime.stop_all()
+        """Clean up harness resources."""
+        pass
 
 
 # ===========================================================================
