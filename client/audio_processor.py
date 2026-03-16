@@ -1,9 +1,10 @@
 """Client-side audio preprocessing: noise gate + echo suppression.
 
 Sits between mic capture and the WebSocket send loop. Processes 16-bit
-PCM chunks in-place with zero external dependencies (numpy only).
+PCM chunks using only the stdlib ``struct`` module (no external deps).
 
 Two stages:
+
 1. **Noise gate** — suppresses chunks below a configurable RMS threshold.
    Removes background hum, fan noise, and low-level room tone so
    Gemini's server-side VAD doesn't false-trigger on silence.
@@ -16,8 +17,9 @@ Two stages:
    (actual user interruption) gets through.
 
 Design choices:
-- Pure Python + struct (no numpy required at runtime, though numpy is
-  available).  Keeps the audio path lightweight.
+
+- Pure Python + ``struct`` — no third-party dependencies.  Keeps the
+  audio path lightweight and portable.
 - Stateless per-chunk processing — no adaptive filter state to corrupt.
 - Configurable thresholds so we can tune per-environment.
 - The processor never *blocks* audio entirely during playback — it just
@@ -119,32 +121,47 @@ class AudioProcessor:
             self._speaker_active = False
             self._speaker_stopped_at = time.monotonic()
 
-    @property
     def _in_echo_window(self) -> bool:
-        """True if we're in the echo suppression window (playing or holdover)."""
+        """Check if we're in the echo suppression window.
+
+        Returns True when the speaker is actively playing or within the
+        holdover period after playback stopped. Clears stale holdover
+        state as a side effect.
+        """
         if self._speaker_active:
             return True
         if self._speaker_stopped_at is not None:
             elapsed_ms = (time.monotonic() - self._speaker_stopped_at) * 1000
             if elapsed_ms < self.holdover_ms:
                 return True
-            # Holdover expired — clear state
+            # Holdover expired — clear state.
             self._speaker_stopped_at = None
         return False
 
     def process(self, pcm_bytes: bytes) -> bytes:
         """Process a mic audio chunk, returning processed bytes.
 
+        The returned bytes are always the same length as the input.
+        Only complete 16-bit samples are considered; a trailing odd
+        byte is preserved but does not affect RMS calculation.
+
         Returns silence (zero bytes) if the chunk is gated.
-        Returns attenuated audio if echo-suppressed.
+        Returns attenuated audio if echo-suppressed but above threshold.
         Returns original audio if it passes all gates.
         """
+        n_bytes = len(pcm_bytes)
+        if n_bytes < 2:
+            # No complete samples — nothing to process.
+            self.chunks_processed += 1
+            return pcm_bytes
+
         self.chunks_processed += 1
         rms = compute_rms(pcm_bytes)
-        silence = b"\x00" * len(pcm_bytes)
+        silence = b"\x00" * n_bytes
+        in_echo = self._in_echo_window()
 
-        if self._in_echo_window:
-            # Echo suppression mode: higher threshold
+        if in_echo:
+            # Echo suppression mode: higher threshold.
             if rms < self.echo_gate_rms:
                 self.chunks_echo_suppressed += 1
                 return silence
@@ -153,7 +170,7 @@ class AudioProcessor:
             self.chunks_echo_suppressed += 1
             return apply_gain(pcm_bytes, self.echo_attenuation)
         else:
-            # Normal mode: basic noise gate
+            # Normal mode: basic noise gate.
             if rms < self.noise_gate_rms:
                 self.chunks_gated += 1
                 return silence
