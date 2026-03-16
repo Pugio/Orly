@@ -116,7 +116,7 @@ def show_scene(scene_name: str, placement: list[float]) -> dict:
     }
 
 
-def run_program(name: str, code: str, description: str = "") -> dict:
+def run_program(name: str, code: str = "", description: str = "") -> dict:
     """Run a mini-program on the table surface.
 
     Programs execute on the edge client with access to the `table` API for
@@ -141,7 +141,8 @@ def run_program(name: str, code: str, description: str = "") -> dict:
 
     Args:
         name: Unique name for the program.
-        code: Python source code to execute.
+        code: Python source code to execute. If empty, loads previously
+              saved code from the session (e.g. from generate_code).
         description: What the program does.
 
     Returns:
@@ -237,6 +238,198 @@ def flip_flashcard(overlay_name: str) -> dict:
     return {
         "status": "flipping",
         "overlay_name": overlay_name,
+    }
+
+
+def generate_code(name: str, description: str, context: str = "") -> dict:
+    """Generate a mini-program using AI code generation.
+
+    Uses a code-specialized model to write Python code that uses the TableAPI.
+    The code is saved as a session artifact. After generation completes
+    (you'll receive a notification), use run_program to execute it.
+
+    Code generation is asynchronous — do NOT assume the code is ready until
+    you receive a completion notification.
+
+    Args:
+        name: Name for the generated program.
+        description: What the program should do. Be specific about the
+                     interactive behaviour, tracking, overlays, and sounds.
+        context: Additional context (e.g. what's on the table, the student's
+                 question, or specific API calls to use).
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "generating",
+        "name": name,
+        "description": description,
+    }
+
+
+def generate_video(
+    name: str,
+    prompt: str,
+    placement: list[float],
+    duration: int = 5,
+    aspect_ratio: str = "16:9",
+) -> dict:
+    """Generate a short AI video and project it onto the table.
+
+    Video generation is asynchronous and takes 1-6 minutes. A loading
+    placeholder will be shown while generating. Do NOT tell the child
+    the video is ready until you receive the completion notification.
+
+    Args:
+        name: Unique name for the video (e.g. "cat-piano-clip").
+        prompt: Description of the video to generate.
+        placement: Where to display it, [ymin, xmin, ymax, xmax] normalised 0-1000.
+        duration: Video duration in seconds (4, 5, 6, or 8).
+        aspect_ratio: "16:9" or "9:16".
+
+    Returns:
+        dict with status.
+    """
+    if duration not in (4, 5, 6, 8):
+        return {"status": "error", "message": f"duration must be 4, 5, 6, or 8, got {duration}"}
+    return {
+        "status": "generating",
+        "name": name,
+        "prompt": prompt,
+        "placement": placement,
+        "duration": duration,
+    }
+
+
+def play_video(name: str, placement: list[float], loop: bool = False) -> dict:
+    """Play a previously generated and saved video on the table.
+
+    Args:
+        name: Name of the video to play (must match a previous generate_video title).
+        placement: Where to display it, [ymin, xmin, ymax, xmax] normalised 0-1000.
+        loop: Whether to loop the video continuously.
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "playing",
+        "name": name,
+        "placement": placement,
+        "loop": loop,
+    }
+
+
+def stop_video(name: str) -> dict:
+    """Stop a playing video.
+
+    Args:
+        name: Name of the video to stop.
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "stopping",
+        "name": name,
+    }
+
+
+def play_music(
+    name: str,
+    prompt: str,
+    bpm: int = 120,
+    temperature: float = 1.0,
+    guidance: float = 3.0,
+) -> dict:
+    """Start playing AI-generated background music.
+
+    Music plays at low volume alongside your voice. The student hears both.
+    Music generation is asynchronous — wait for the notification before
+    telling the student it's playing.
+
+    Args:
+        name: Name for the music track (e.g. "gentle-lullaby").
+        prompt: Description of the music (e.g. "gentle piano lullaby with soft strings").
+        bpm: Beats per minute, 60-200 (default 120).
+        temperature: Randomness 0.0-3.0 (default 1.0).
+        guidance: Prompt adherence 0.0-6.0 (default 3.0).
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "starting",
+        "name": name,
+        "prompt": prompt,
+        "bpm": bpm,
+        "temperature": temperature,
+        "guidance": guidance,
+    }
+
+
+def stop_music(name: str = "") -> dict:
+    """Stop the currently playing background music.
+
+    The music track is saved to session storage for later replay.
+
+    Args:
+        name: Optional name of the track to stop (currently only one track at a time).
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "stopping",
+        "name": name,
+    }
+
+
+def pause_music() -> dict:
+    """Pause the background music (keeps session alive for resuming).
+
+    Returns:
+        dict with status.
+    """
+    return {"status": "pausing"}
+
+
+def resume_music() -> dict:
+    """Resume paused background music.
+
+    Returns:
+        dict with status.
+    """
+    return {"status": "resuming"}
+
+
+def replay_music(name: str) -> dict:
+    """Replay a previously generated and saved music track.
+
+    Args:
+        name: Name of the saved track to replay.
+
+    Returns:
+        dict with status.
+    """
+    return {
+        "status": "replaying",
+        "name": name,
+    }
+
+
+def get_session_manifest() -> dict:
+    """Get the manifest of all session artifacts (images, music, videos, programs).
+
+    The actual manifest is on the edge client. Results arrive as a notification.
+
+    Returns:
+        dict with status. Actual manifest arrives as a notification.
+    """
+    return {
+        "status": "fetching",
+        "description": "Session manifest requested. Results will arrive as a notification.",
     }
 
 

@@ -66,7 +66,7 @@ class TestProjectOverlayValid:
 class TestProjectOverlayInvalidContentType:
     def test_unknown_type_returns_error(self):
         result = project_overlay(
-            content_type="video",
+            content_type="hologram",
             placement=[100.0, 200.0, 500.0, 700.0],
             title="Bad",
             data={},

@@ -170,6 +170,127 @@ def test_image_is_png(store):
     assert header[:4] == b"\x89PNG"
 
 
+# ------------------------------------------------------------------
+# Music storage tests
+# ------------------------------------------------------------------
+
+
+def test_init_creates_music_and_videos_dirs(store):
+    """music_dir and videos_dir exist after init."""
+    import os
+
+    assert os.path.isdir(store.music_dir)
+    assert os.path.isdir(store.videos_dir)
+
+
+def test_save_and_load_music(store):
+    """Save WAV bytes, load returns same bytes."""
+    data = b"\x00\x01\x02\x03" * 100
+    store.save_music("my-track", data)
+    loaded = store.load_music("my-track")
+    assert loaded == data
+
+
+def test_load_nonexistent_music(store):
+    """Returns None for nonexistent music."""
+    assert store.load_music("nope") is None
+
+
+def test_list_music(store):
+    """Save 2 tracks, list returns sorted names."""
+    store.save_music("zzz-track", b"\x00")
+    store.save_music("aaa-track", b"\x00")
+    assert store.list_music() == ["aaa-track", "zzz-track"]
+
+
+def test_list_music_empty(store):
+    """Returns empty list when no music saved."""
+    assert store.list_music() == []
+
+
+def test_delete_music(store):
+    """Save then delete, returns True, load returns None."""
+    store.save_music("del-me", b"\x00\x01")
+    assert store.delete_music("del-me") is True
+    assert store.load_music("del-me") is None
+
+
+def test_delete_nonexistent_music(store):
+    """Returns False for nonexistent music."""
+    assert store.delete_music("nope") is False
+
+
+# ------------------------------------------------------------------
+# Video storage tests
+# ------------------------------------------------------------------
+
+
+def test_save_and_load_video(store):
+    """Save MP4 bytes, load returns same bytes."""
+    data = b"\x00\x00\x00\x1cftypisom" + b"\x00" * 100
+    store.save_video("my-clip", data)
+    loaded = store.load_video("my-clip")
+    assert loaded == data
+
+
+def test_load_nonexistent_video(store):
+    """Returns None for nonexistent video."""
+    assert store.load_video("nope") is None
+
+
+def test_list_videos(store):
+    """Save 2 videos, list returns sorted names."""
+    store.save_video("zzz-video", b"\x00")
+    store.save_video("aaa-video", b"\x00")
+    assert store.list_videos() == ["aaa-video", "zzz-video"]
+
+
+def test_list_videos_empty(store):
+    """Returns empty list when no videos saved."""
+    assert store.list_videos() == []
+
+
+def test_delete_video(store):
+    """Save then delete, returns True, load returns None."""
+    store.save_video("del-me", b"\x00\x01")
+    assert store.delete_video("del-me") is True
+    assert store.load_video("del-me") is None
+
+
+def test_delete_nonexistent_video(store):
+    """Returns False for nonexistent video."""
+    assert store.delete_video("nope") is False
+
+
+def test_get_video_path(store):
+    """Returns path for existing video, None for nonexistent."""
+    store.save_video("my-clip", b"\x00")
+    path = store.get_video_path("my-clip")
+    assert path is not None
+    assert path.endswith(".mp4")
+    assert store.get_video_path("nope") is None
+
+
+def test_manifest_includes_music_and_videos(store):
+    """Manifest includes music and videos keys."""
+    store.save_music("track1", b"\x00")
+    store.save_video("clip1", b"\x00")
+    manifest = store.get_manifest()
+    assert "music" in manifest
+    assert "videos" in manifest
+    assert "track1" in manifest["music"]
+    assert "clip1" in manifest["videos"]
+
+
+def test_clear_removes_music_and_videos(store):
+    """Clear deletes music and video files, recreates dirs."""
+    store.save_music("track", b"\x00")
+    store.save_video("clip", b"\x00")
+    store.clear()
+    assert store.list_music() == []
+    assert store.list_videos() == []
+
+
 def test_concurrent_saves(store):
     """Save images from 2 threads, both succeed."""
     errors = []

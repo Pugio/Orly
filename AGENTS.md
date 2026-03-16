@@ -53,7 +53,7 @@ tablelight/
 ├── backend/               ← Cloud Run service (FastAPI + raw GenAI SDK)
 │   ├── main.py            ← WebSocket endpoint + Gemini Live session
 │   ├── agent.py           ← System prompt + tool schema generation
-│   └── tools.py           ← project_overlay, refresh_view, show_scene, run_program, stop_program, list_programs, get_overlay_state
+│   └── tools.py           ← project_overlay, refresh_view, show_scene, run_program, stop_program, list_programs, get_overlay_state, generate_code, generate_video, play_video, stop_video, play_music, stop_music, pause_music, resume_music, replay_music, get_session_manifest
 ├── client/                ← Local edge client (camera, audio, projector)
 │   ├── overlay_state.py   ← Named overlay tracking (CRUD, JSON/ASCII state)
 │   ├── session_store.py   ← File-backed session storage (images, programs)
@@ -65,7 +65,7 @@ tablelight/
 ├── poc/                   ← Proof-of-concept scripts
 ├── infra/                 ← Terraform / deploy scripts
 ├── docs/                  ← Architecture diagram, demo script, blog
-└── tests/                 ← 991 tests
+└── tests/                 ← 1099 tests
 ```
 
 ## Current State
@@ -73,7 +73,7 @@ tablelight/
 - End-to-end system: **working** — camera → backend → projector overlay
 - ADK → raw GenAI SDK migration: **done** — separate audio/video streams, no FIFO
 - Simulation harness: **done** — `uv run python -m simulation.latency_benchmark`
-- Test coverage: **991 tests** passing
+- Test coverage: **1099 tests** passing
 - Manual projector calibration: **done**
 - Image generation (Gemini): **done** — with enhance mode for user drawings
 - Markdown/annotation rendering: **done**
@@ -89,3 +89,7 @@ tablelight/
 - Session persistence: **done** — save/restore overlays, debounced auto-save
 - Flashcard renderer: **done** — front/back with flip tool
 - Perf: **done** — JPEG round-trip eliminated, tracker offloaded to thread pool
+- Music generation (Lyria): **done** — streaming background music with play/stop/pause/replay
+- Video generation (Veo): **done** — async video gen with polling, MP4 playback on projector
+- Code generation (Gemini 3 Flash): **done** — async code gen with TableAPI docs, validate + save
+- Session artifacts: **done** — images, programs, music, videos all persisted and referenceable

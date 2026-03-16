@@ -23,7 +23,7 @@ class TestEnhancePrefix:
         mock_response.candidates = []
         mock_client.models.generate_content.return_value = mock_response
 
-        with patch("client.renderer.image._get_genai_client", return_value=mock_client):
+        with patch("client.renderer.image.get_genai_client", return_value=mock_client):
             render_image("draw a cat", 200, 200, enhance=False, style="default")
 
             call_args = mock_client.models.generate_content.call_args
@@ -38,7 +38,7 @@ class TestEnhancePrefix:
         mock_response.candidates = []
         mock_client.models.generate_content.return_value = mock_response
 
-        with patch("client.renderer.image._get_genai_client", return_value=mock_client):
+        with patch("client.renderer.image.get_genai_client", return_value=mock_client):
             render_image("draw a cat", 200, 200, enhance=True, style="default")
 
             call_args = mock_client.models.generate_content.call_args
@@ -53,7 +53,7 @@ class TestEnhancePrefix:
         mock_response.candidates = []
         mock_client.models.generate_content.return_value = mock_response
 
-        with patch("client.renderer.image._get_genai_client", return_value=mock_client):
+        with patch("client.renderer.image.get_genai_client", return_value=mock_client):
             render_image("draw a diagram", 200, 200, enhance=True, style="technical")
 
             call_args = mock_client.models.generate_content.call_args

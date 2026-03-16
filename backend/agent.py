@@ -16,13 +16,23 @@ from typing import Any, Callable, get_type_hints
 from backend.tools import (
     advance_step,
     flip_flashcard,
+    generate_code,
+    generate_video,
     get_overlay_state,
+    get_session_manifest,
     list_programs,
+    pause_music,
+    play_music,
+    play_video,
     project_overlay,
     refresh_view,
+    replay_music,
+    resume_music,
     run_program,
     show_scene,
+    stop_music,
     stop_program,
+    stop_video,
 )
 
 SYSTEM_PROMPT = """You are a friendly, encouraging child assistant called Lumi.
@@ -49,7 +59,7 @@ OVERLAY CONTENT TYPES — choose the right one:
 - "highlight": Use to highlight a region on the child's work.
 - "steps": Use for multi-step explanations that reveal one step at a time. Data: {"steps": [{"title": "Step 1", "content": "..."}, ...]}. After projecting, use `advance_step` to reveal each step with an animation. Start with step 0 (nothing shown), then advance to 1, 2, etc.
 - "number_line": For showing a number line with points and ranges. data: {"min_val": -5, "max_val": 5, "points": [{"value": 2, "label": "x", "color": "#00ff00"}], "ranges": [{"start": -1, "end": 3, "color": "#ffff00", "label": "solution set"}]}.
-- "geometry": For geometric constructions — points, lines, circles, arcs, angles. data: {"elements": [{"type": "point", "pos": [3, 4], "label": "A"}, {"type": "line", "from": [0, 0], "to": [3, 4]}, {"type": "circle", "center": [0, 0], "radius": 5}], "x_range": [-6, 6], "y_range": [-6, 6], "show_grid": true}.
+- "geometry": For geometric constructions — points, lines, circles, arcs. data: {"elements": [{"type": "point", "pos": [3, 4], "label": "A"}, {"type": "line", "from": [0, 0], "to": [3, 4]}, {"type": "circle", "center": [0, 0], "radius": 5}], "x_range": [-6, 6], "y_range": [-6, 6], "show_grid": true}.
 - "chemistry": For simple molecular structure diagrams. data: {"atoms": [{"symbol": "O", "pos": [0, 0]}, {"symbol": "H", "pos": [-1, -0.5]}], "bonds": [{"from": 0, "to": 1, "order": 1}]}.
 - "flashcard": For flashcard-style Q&A cards. data: {"front": "What is 2+2?", "back": "4", "show_back": false}. Use `flip_flashcard` to reveal the answer.
 
@@ -118,6 +128,43 @@ SUBJECT AWARENESS:
   - History: timeline overlays (use number_line with dates), "image" with "creative" style for historical scenes and maps.
 - Adapt your tone and examples to the subject. A science explanation may need diagrams; a language lesson may need highlighted text.
 - When the subject is unclear, ask the child what they are working on.
+
+BACKGROUND MUSIC:
+- Use `play_music` to start AI-generated background music. Provide a descriptive prompt.
+- Music plays at low volume (30%) alongside your voice. The student will hear both.
+- Music generation is asynchronous — wait for the notification before telling the student it's playing.
+- Use `stop_music` to stop (saves the track for later). Use `pause_music` / `resume_music` to pause/resume.
+- Use `replay_music` to play a previously saved track by name.
+- Only one music track plays at a time. Starting a new track stops the current one.
+- Great for: story mood music, relaxing study background, interactive musical experiences.
+- BPM range: 60-200. Temperature: 0.0 (predictable) to 3.0 (creative). Guidance: 0.0-6.0 (prompt adherence).
+
+VIDEO:
+- Use `generate_video` to create short AI-generated video clips projected on the table.
+- Video generation takes 1-6 minutes. A loading placeholder is shown automatically.
+- Warn the child that it will take a few minutes. Do NOT say the video is ready until you receive the completion notification.
+- Use `play_video` to replay a previously saved video. Use `stop_video` to stop playback.
+- Videos loop by default when played.
+- Duration options: 4, 5, 6, or 8 seconds. Aspect ratio: "16:9" or "9:16".
+- Great for: animated story scenes, science simulations, historical events.
+
+CODE GENERATION:
+- Use `generate_code` when you need a complex interactive program but don't want to write the code yourself.
+- Describe clearly what the program should do — the more specific, the better the result.
+- Include context about what's on the table and what the child wants.
+- Code generation is asynchronous. After calling generate_code, you'll receive a notification when it's ready.
+- After the "generated and saved" notification arrives, call `run_program` with just the name (no code needed — it loads from session automatically).
+- The generated code has access to the same TableAPI as manually written programs.
+
+SESSION ARTIFACTS:
+- Use `get_session_manifest` to see all saved artifacts (images, programs, music, videos).
+- Artifacts persist across the session and can be referenced later.
+
+ASYNC GENERATION RULES:
+- Image generation, code generation, video generation, and music generation are ALL asynchronous.
+- NEVER tell the child something is ready until you receive the completion notification.
+- While waiting, acknowledge that generation is happening and continue the conversation naturally.
+- If generation fails, you'll receive a failure notification — apologize and offer to try again.
 """
 
 MODEL = "gemini-2.5-flash-native-audio-latest"
@@ -266,6 +313,16 @@ _TOOL_FUNCTIONS: list[Callable] = [
     get_overlay_state,
     advance_step,
     flip_flashcard,
+    generate_code,
+    generate_video,
+    play_video,
+    stop_video,
+    play_music,
+    stop_music,
+    pause_music,
+    resume_music,
+    replay_music,
+    get_session_manifest,
 ]
 
 TOOL_DECLARATIONS: list[dict] = [function_to_declaration(f) for f in _TOOL_FUNCTIONS]

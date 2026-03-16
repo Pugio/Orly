@@ -7,6 +7,7 @@ __pycache__/
 .pytest_cache/
 
 # Calibration / debug artifacts
+calibration/calibration_mat_*.png
 rectified_output.png
 rectified_output_rotated.png
 debug_*.png

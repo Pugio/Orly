@@ -48,7 +48,7 @@ class TestImageRendererWithReference:
 
         ref_frame = np.zeros((768, 768, 3), dtype=np.uint8)
 
-        with patch("client.renderer.image._get_genai_client") as mock_client:
+        with patch("client.renderer.image.get_genai_client") as mock_client:
             mock_client.return_value.models.generate_content.return_value = mock_response
             result = render_image("a circle", width=400, height=300,
                                   reference_frame=ref_frame)
@@ -77,7 +77,7 @@ class TestImageRendererWithReference:
         mock_response.candidates = [MagicMock()]
         mock_response.candidates[0].content.parts = [mock_part]
 
-        with patch("client.renderer.image._get_genai_client") as mock_client:
+        with patch("client.renderer.image.get_genai_client") as mock_client:
             mock_client.return_value.models.generate_content.return_value = mock_response
             result = render_image("a circle", width=400, height=300)
 

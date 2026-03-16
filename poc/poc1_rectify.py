@@ -7,7 +7,7 @@ and displays a rectified (top-down) view of the table surface.
 
 Setup:
     1. Install "IP Webcam" on your Android phone (free on Play Store).
-    2. Print calibration_mat.png on A4 paper (run generate_calibration_mat.py first).
+    2. Print calibration mat (run `python -m calibration.generate_mat` first).
     3. Place the printed mat on your table.
     4. Mount your phone on a stand pointing at the table.
     5. Open IP Webcam → Start Server. Note the IP address shown.
@@ -43,7 +43,7 @@ from client.display import show_on_laptop
 
 # --- Configuration ---
 
-# ArUco setup — must match generate_calibration_mat.py
+# ArUco setup — must match calibration.generate_mat
 ARUCO_DICT = cv2.aruco.DICT_4X4_50
 
 # Expected marker IDs at each corner of the mat

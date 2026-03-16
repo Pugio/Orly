@@ -182,8 +182,7 @@ class OverlayManager:
         """Render an overlay image using client/renderer/ modules.
 
         Args:
-            content_type: One of the supported overlay types (graph, annotation,
-                highlight, markdown, image, number_line, geometry, chemistry, steps).
+            content_type: Any registered renderer name (see client/renderer/registry.py).
             placement: [ymin, xmin, ymax, xmax] in Gemini 0-1000 coords.
             title: Title text (used as prefix for annotations).
             data: Type-specific data dict.

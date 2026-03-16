@@ -554,13 +554,9 @@ PoCs 1–4 are independent. PoC 5 depends on 4. PoC 6 depends on all.
 
 ## 8. Existing Artifacts
 
-### `generate_calibration_mat.py`
+### `calibration/generate_mat.py`
 
-Generates a printable A4 calibration mat with four ArUco markers (IDs 0–3, `DICT_4X4_50` dictionary, 30mm square, 15mm margin). Output: `calibration_mat.png` (1240×1753 px at 150 DPI).
-
-### `calibration_mat.png`
-
-Pre-generated mat, ready to print at A4. Four markers at corners, blank working area in centre.
+Generates a printable calibration mat with four ArUco markers (IDs 0–3, `DICT_4X4_50` dictionary, 25mm square, 5mm margin). Supports A4, US Letter, A3, Tabloid, Legal, and custom dimensions via CLI args. Run with `python -m calibration.generate_mat [--paper letter|a3|...]`.
 
 ### `poc1_rectify.py`
 
@@ -579,7 +575,7 @@ Complete PoC 1 implementation. Connects to IP Webcam or local webcam, detects ma
 #### Setup
 
 ```bash
-python generate_calibration_mat.py    # Creates calibration_mat.png
+python -m calibration.generate_mat     # Creates calibration/calibration_mat_a4.png
 # Print on A4, "actual size" / no scaling
 # Place on table, mount phone on stand, start IP Webcam
 python poc1_rectify.py --url http://<PHONE_IP>:8080
@@ -876,7 +872,7 @@ tablelight/
 │   └── cloudbuild.yaml
 │
 ├── calibration/
-│   ├── generate_calibration_mat.py      ✅ exists
+│   ├── calibration/generate_mat.py       ✅ exists
 │   ├── calibration_mat.png              ✅ exists
 │   ├── poc2_projector_calibrate.py      (to build)
 │   └── poc2_projector_verify.py         (to build)

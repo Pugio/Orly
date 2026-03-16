@@ -148,7 +148,7 @@ def render_geometry(data: dict, width: int, height: int, title: str = "") -> np.
 
 SPEC = {
     "name": "geometry",
-    "description": "Geometric constructions — points, lines, circles, arcs, angles.",
+    "description": "Geometric constructions — points, lines, circles, arcs.",
     "data_format": (
         '{"elements": [{"type": "point", "pos": [3, 4], "label": "A"}, '
         '{"type": "line", "from": [0, 0], "to": [3, 4]}, '

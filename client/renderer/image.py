@@ -4,10 +4,10 @@ Uses gemini-3.1-flash-image-preview to generate images from text prompts.
 Falls back to a text annotation if generation fails.
 """
 
-import os
-
 import cv2
 import numpy as np
+
+from client.genai_utils import get_genai_client
 
 ENHANCE_PREFIX = (
     "The student has drawn something on their paper. Enhance and build upon "
@@ -15,33 +15,6 @@ ENHANCE_PREFIX = (
     "shapes, and intent. Add detail, color, and refinement while keeping their "
     "vision intact. "
 )
-
-
-_genai_client_cache = {}
-
-
-def _get_genai_client():
-    """Get or create a cached google.genai client.
-
-    Checks env vars first, then falls back to `llm keys get gemini`.
-    """
-    if "client" in _genai_client_cache:
-        return _genai_client_cache["client"]
-    from google import genai
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        import subprocess
-        try:
-            api_key = subprocess.check_output(
-                ["llm", "keys", "get", "gemini"], text=True
-            ).strip()
-        except Exception:
-            pass
-    if not api_key:
-        raise RuntimeError("No Gemini API key found. Set GOOGLE_API_KEY or run `llm keys set gemini`.")
-    client = genai.Client(api_key=api_key)
-    _genai_client_cache["client"] = client
-    return client
 
 
 def render_loading(prompt: str, width: int, height: int) -> np.ndarray:
@@ -126,7 +99,7 @@ def render_image(
         On failure, returns a fallback annotation with the prompt text.
     """
     try:
-        client = _get_genai_client()
+        client = get_genai_client()
         from google.genai import types
 
         template = _STYLE_PROMPTS.get(style, _STYLE_PROMPTS["default"])

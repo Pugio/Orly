@@ -71,7 +71,7 @@ class TestRenderImage:
         mock_response.candidates = [MagicMock()]
         mock_response.candidates[0].content.parts = [mock_part]
 
-        with patch("client.renderer.image._get_genai_client") as mock_client:
+        with patch("client.renderer.image.get_genai_client") as mock_client:
             mock_client.return_value.models.generate_content.return_value = mock_response
             result = render_image("a red square", width=400, height=300)
 
@@ -83,7 +83,7 @@ class TestRenderImage:
         from unittest.mock import patch
         from client.renderer.image import render_image
 
-        with patch("client.renderer.image._get_genai_client", side_effect=Exception("no key")):
+        with patch("client.renderer.image.get_genai_client", side_effect=Exception("no key")):
             result = render_image("test prompt", width=400, height=300)
 
         assert result.shape == (300, 400, 3)
@@ -98,7 +98,7 @@ class TestRenderImage:
         mock_response = MagicMock()
         mock_response.candidates = []
 
-        with patch("client.renderer.image._get_genai_client") as mock_client:
+        with patch("client.renderer.image.get_genai_client") as mock_client:
             mock_client.return_value.models.generate_content.return_value = mock_response
             result = render_image("bad prompt", width=400, height=300)
 
@@ -116,7 +116,7 @@ class TestRenderImage:
         mock_response.candidates = [MagicMock()]
         mock_response.candidates[0].content.parts = [mock_part]
 
-        with patch("client.renderer.image._get_genai_client") as mock_client:
+        with patch("client.renderer.image.get_genai_client") as mock_client:
             mock_client.return_value.models.generate_content.return_value = mock_response
             result = render_image("bad prompt", width=400, height=300)
 

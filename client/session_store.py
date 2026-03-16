@@ -14,8 +14,12 @@ class SessionStore:
         self.session_dir = session_dir
         self.images_dir = os.path.join(session_dir, "images")
         self.programs_dir = os.path.join(session_dir, "programs")
+        self.music_dir = os.path.join(session_dir, "music")
+        self.videos_dir = os.path.join(session_dir, "videos")
         os.makedirs(self.images_dir, exist_ok=True)
         os.makedirs(self.programs_dir, exist_ok=True)
+        os.makedirs(self.music_dir, exist_ok=True)
+        os.makedirs(self.videos_dir, exist_ok=True)
         self._created_at = time.time()
 
     def save_image(self, name: str, image: np.ndarray) -> str:
@@ -79,6 +83,94 @@ class SessionStore:
             if f.endswith(".py")
         )
 
+    # ------------------------------------------------------------------
+    # Music storage
+    # ------------------------------------------------------------------
+
+    def save_music(self, name: str, audio_bytes: bytes) -> str:
+        """Save raw audio bytes as a WAV file. Returns the file path."""
+        safe = self.sanitize_name(name)
+        path = os.path.join(self.music_dir, f"{safe}.wav")
+        with open(path, "wb") as f:
+            f.write(audio_bytes)
+        return path
+
+    def load_music(self, name: str) -> bytes | None:
+        """Load a previously saved music file by name."""
+        safe = self.sanitize_name(name)
+        path = os.path.join(self.music_dir, f"{safe}.wav")
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            return f.read()
+
+    def list_music(self) -> list[str]:
+        """List all saved music names (without extension)."""
+        if not os.path.exists(self.music_dir):
+            return []
+        return sorted(
+            os.path.splitext(f)[0]
+            for f in os.listdir(self.music_dir)
+            if f.endswith(".wav")
+        )
+
+    def delete_music(self, name: str) -> bool:
+        """Delete a saved music file. Returns True if it existed."""
+        safe = self.sanitize_name(name)
+        path = os.path.join(self.music_dir, f"{safe}.wav")
+        if os.path.exists(path):
+            os.remove(path)
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Video storage
+    # ------------------------------------------------------------------
+
+    def save_video(self, name: str, video_bytes: bytes) -> str:
+        """Save video bytes as an MP4 file. Returns the file path."""
+        safe = self.sanitize_name(name)
+        path = os.path.join(self.videos_dir, f"{safe}.mp4")
+        with open(path, "wb") as f:
+            f.write(video_bytes)
+        return path
+
+    def load_video(self, name: str) -> bytes | None:
+        """Load a previously saved video file by name."""
+        safe = self.sanitize_name(name)
+        path = os.path.join(self.videos_dir, f"{safe}.mp4")
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            return f.read()
+
+    def get_video_path(self, name: str) -> str | None:
+        """Get the filesystem path for a saved video (for cv2.VideoCapture)."""
+        safe = self.sanitize_name(name)
+        path = os.path.join(self.videos_dir, f"{safe}.mp4")
+        if os.path.exists(path):
+            return path
+        return None
+
+    def list_videos(self) -> list[str]:
+        """List all saved video names (without extension)."""
+        if not os.path.exists(self.videos_dir):
+            return []
+        return sorted(
+            os.path.splitext(f)[0]
+            for f in os.listdir(self.videos_dir)
+            if f.endswith(".mp4")
+        )
+
+    def delete_video(self, name: str) -> bool:
+        """Delete a saved video file. Returns True if it existed."""
+        safe = self.sanitize_name(name)
+        path = os.path.join(self.videos_dir, f"{safe}.mp4")
+        if os.path.exists(path):
+            os.remove(path)
+            return True
+        return False
+
     def _state_path(self) -> str:
         return os.path.join(self.session_dir, "state.json")
 
@@ -131,6 +223,8 @@ class SessionStore:
         return {
             "images": self.list_images(),
             "programs": self.list_programs(),
+            "music": self.list_music(),
+            "videos": self.list_videos(),
             "created_at": self._created_at,
             "session_dir": self.session_dir,
         }
@@ -144,6 +238,8 @@ class SessionStore:
         # Recreate empty dirs
         os.makedirs(self.images_dir, exist_ok=True)
         os.makedirs(self.programs_dir, exist_ok=True)
+        os.makedirs(self.music_dir, exist_ok=True)
+        os.makedirs(self.videos_dir, exist_ok=True)
 
     @staticmethod
     def sanitize_name(name: str) -> str:

@@ -205,7 +205,7 @@ def table_to_projector(
 def detect_camera_homography(cap: cv2.VideoCapture) -> np.ndarray:
     """Detect ArUco markers and compute H_cam live.
 
-    Reuses the same ArUco config as PoC 1 / generate_calibration_mat.py.
+    Reuses the same ArUco config as PoC 1 / calibration.generate_mat.
     Waits until all 4 markers are detected, then computes the homography.
     """
     ARUCO_DICT = cv2.aruco.DICT_4X4_50
