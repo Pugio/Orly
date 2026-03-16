@@ -1,8 +1,10 @@
 """Tests for audio playback, interruption handling, and tool call cancellation.
 
 AudioPlayer.clear() must instantly stop playback on interruption.
-audio_send_loop must always forward mic audio (never gate it) so
-Gemini's server-side VAD can detect user speech for interruptions.
+audio_send_loop must always forward a chunk for every mic read (never
+drop chunks). With an AudioProcessor, chunks may be replaced with
+silence but are still sent so Gemini's server-side VAD sees a
+continuous stream.
 """
 
 from __future__ import annotations

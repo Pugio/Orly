@@ -441,6 +441,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Save the first sent frame to gemini_view.jpg for inspection",
     )
+    parser.add_argument(
+        "--noise-gate",
+        type=float,
+        default=None,
+        help="Noise gate RMS threshold (default: 80). Lower = more sensitive.",
+    )
+    parser.add_argument(
+        "--echo-gate",
+        type=float,
+        default=None,
+        help="Echo suppression RMS threshold during playback (default: 800).",
+    )
     return parser.parse_args(argv)
 
 
@@ -498,6 +510,7 @@ async def main(args: argparse.Namespace | None = None):
     # --- Audio (mic capture is agent-only; player comes from stack) ---
     audio_capture = None
     audio_player = stack.audio_player
+    _shared_state["audio_player"] = audio_player
     audio_diag = AudioDiagnostics() if not args.no_audio else None
     audio_processor = None
 
