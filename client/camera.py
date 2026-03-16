@@ -1,19 +1,24 @@
 """Camera capture + ArUco homography for the edge client.
 
-Captures frames from IP Webcam or local webcam, detects ArUco markers,
-computes a homography, and returns rectified (top-down) JPEG frames
-ready for the backend.
+Captures frames from a pluggable CaptureSource (USB webcam, IP Webcam, etc.),
+detects ArUco markers, computes a homography, and returns rectified (top-down)
+JPEG frames ready for the backend.
 
 Pure functions (detect_markers, compute_homography, rectify_frame, encode_jpeg)
 are extracted for testability. The CameraCapture class wraps them for use in
 the main client loop.
 """
 
+from __future__ import annotations
+
 import logging
+import os
 import time
 
 import cv2
 import numpy as np
+
+from client.capture import CaptureSource, IPWebcamSource, USBWebcamSource
 
 logger = logging.getLogger(__name__)
 
@@ -125,30 +130,53 @@ def encode_jpeg(frame: np.ndarray, quality: int = 70) -> bytes:
 
 
 class CameraCapture:
-    """Captures frames from IP Webcam, detects ArUco markers, computes homography.
+    """Captures frames from a pluggable source, detects ArUco markers, computes homography.
 
-    Usage:
-        cam = CameraCapture(url="http://192.168.1.100:8080")
+    Accepts either a ``CaptureSource`` instance directly, or the legacy
+    ``url`` / ``webcam`` keyword arguments for backward compatibility.
+
+    Usage (new — with explicit source):
+        from client.capture import USBWebcamSource
+        cam = CameraCapture(source=USBWebcamSource(0))
         cam.start()
         jpeg_bytes, raw_frame, H = cam.get_rectified_frame()
         cam.stop()
+
+    Usage (legacy — still works):
+        cam = CameraCapture(url="http://192.168.1.100:8080")
+        cam.start()
     """
 
     def __init__(
         self,
+        source: CaptureSource | None = None,
+        *,
         url: str | None = None,
         webcam: int | None = None,
         output_size: tuple[int, int] = (768, 768),
         rotate: int = 0,
         latency_tracker=None,
+        calibration_file: str | None = None,
     ):
+        # Resolve capture source: explicit source wins, then url, then webcam.
+        if source is not None:
+            self.source = source
+        elif url is not None:
+            self.source = IPWebcamSource(url)
+        elif webcam is not None:
+            self.source = USBWebcamSource(webcam)
+        else:
+            self.source = None  # must be set before start()
+
+        # Keep legacy attributes for backward compat (used in tests)
         self.url = url
         self.webcam = webcam
+
         self.output_size = output_size
         self.rotate = rotate  # CW rotation in degrees (0, 90, 180, 270)
         self.latency_tracker = latency_tracker
+        self.calibration_file = calibration_file
 
-        self.cap = None
         self.detector = None
         self.H_cached = None  # last-good homography
 
@@ -171,25 +199,37 @@ class CameraCapture:
             [0, 0], [w, 0], [w, h], [0, h],
         ], dtype=np.float32)
 
+    def _load_cached_calibration(self):
+        """Load homography from disk if calibration_file exists."""
+        if self.calibration_file and os.path.exists(self.calibration_file):
+            try:
+                self.H_cached = np.load(self.calibration_file)
+                logger.info("Loaded cached calibration from %s", self.calibration_file)
+            except Exception:
+                logger.warning("Failed to load calibration from %s", self.calibration_file)
+
+    def _save_calibration(self, H: np.ndarray):
+        """Save homography to disk for next startup."""
+        if self.calibration_file is None:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.calibration_file) or ".", exist_ok=True)
+            np.save(self.calibration_file, H)
+        except Exception:
+            logger.warning("Failed to save calibration to %s", self.calibration_file)
+
     def start(self):
-        """Open video stream and initialize ArUco detector."""
-        if self.url:
-            stream_url = f"{self.url.rstrip('/')}/video"
-            self.cap = cv2.VideoCapture(stream_url)
-            if not self.cap.isOpened():
-                raise RuntimeError(f"Failed to open video stream: {stream_url}")
-            # Set small buffer size to reduce frame staleness.
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        elif self.webcam is not None:
-            self.cap = cv2.VideoCapture(self.webcam)
-            if not self.cap.isOpened():
-                raise RuntimeError("Failed to open video stream")
-        else:
-            raise ValueError("Provide url or webcam index")
+        """Open capture source and initialize ArUco detector."""
+        if self.source is None:
+            raise ValueError("Provide source, url, or webcam index")
+        self.source.open()
+        logger.info("Capture source started: %s", self.source.name)
 
         dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
         parameters = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(dictionary, parameters)
+
+        self._load_cached_calibration()
 
     @property
     def marker_staleness_seconds(self) -> float | None:
@@ -202,17 +242,16 @@ class CameraCapture:
         return time.monotonic() - self._last_detection_time
 
     def _capture_frame(self) -> np.ndarray | None:
-        """Capture a single frame from the camera.
+        """Capture a single frame from the capture source.
 
-        Grabs and discards one buffered frame to reduce staleness.
+        The source handles grab-and-discard internally.
         Tracks consecutive read failures and logs a warning after
         max_consecutive_failures.
         """
-        if self.cap is None:
+        if self.source is None:
             return None
-        self.cap.grab()  # discard one stale frame
-        ret, frame = self.cap.read()
-        if not ret:
+        frame = self.source.read()
+        if frame is None:
             self._consecutive_failures += 1
             self.stats["consecutive_failures"] = self._consecutive_failures
             if self._consecutive_failures >= self._max_consecutive_failures:
@@ -250,6 +289,7 @@ class CameraCapture:
 
         if H is not None:
             self.H_cached = H
+            self._save_calibration(H)
             self._last_detection_time = time.monotonic()
             self.stats["frames_with_markers"] += 1
         elif self.H_cached is not None:
@@ -281,7 +321,6 @@ class CameraCapture:
         return jpeg_bytes, rectified, self.H_cached
 
     def stop(self):
-        """Release camera."""
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        """Release capture source."""
+        if self.source is not None:
+            self.source.close()

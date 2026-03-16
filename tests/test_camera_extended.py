@@ -1,5 +1,7 @@
 """Extended tests for client/camera.py — pure functions with real cv2/numpy."""
 
+import os
+
 import cv2
 import numpy as np
 import pytest
@@ -266,5 +268,123 @@ class TestCameraCaptureInit:
     def test_no_url_or_webcam_raises(self):
         from client.camera import CameraCapture
         cam = CameraCapture()
-        with pytest.raises(ValueError, match="url or webcam"):
+        with pytest.raises(ValueError, match="source, url, or webcam"):
             cam.start()
+
+
+# ---------------------------------------------------------------------------
+# Calibration persistence
+# ---------------------------------------------------------------------------
+
+
+class TestCalibrationPersistence:
+    def test_save_and_load_homography(self, tmp_path):
+        """Saved homography is loaded on next start."""
+        from client.camera import CameraCapture
+        from client.capture import CaptureSource
+
+        cal_file = str(tmp_path / "cal.npy")
+        H = np.eye(3, dtype=np.float64)
+        H[0, 2] = 42.0  # distinctive value
+
+        # Save
+        cam = CameraCapture(url="http://example.com:8080", calibration_file=cal_file)
+        cam._save_calibration(H)
+
+        # Load into a fresh instance
+        class DummySource(CaptureSource):
+            name = "dummy"
+            def open(self): pass
+            def read(self): return None
+            def close(self): pass
+
+        cam2 = CameraCapture(source=DummySource(), calibration_file=cal_file)
+        cam2.start()
+        assert cam2.H_cached is not None
+        np.testing.assert_array_equal(cam2.H_cached, H)
+
+    def test_no_calibration_file_means_none(self):
+        """Without calibration_file, H_cached stays None."""
+        from client.camera import CameraCapture
+        cam = CameraCapture(url="http://example.com:8080")
+        assert cam.H_cached is None
+
+    def test_missing_file_no_crash(self, tmp_path):
+        """Missing calibration file doesn't crash start()."""
+        from client.camera import CameraCapture
+        from client.capture import CaptureSource
+
+        class DummySource(CaptureSource):
+            name = "dummy"
+            def open(self): pass
+            def read(self): return None
+            def close(self): pass
+
+        cal_file = str(tmp_path / "nonexistent.npy")
+        cam = CameraCapture(source=DummySource(), calibration_file=cal_file)
+        cam.start()
+        assert cam.H_cached is None
+
+    def test_detection_saves_calibration(self, tmp_path):
+        """When markers are detected, homography is saved to disk."""
+        from client.camera import CameraCapture
+        from client.capture import CaptureSource
+
+        cal_file = str(tmp_path / "cal.npy")
+
+        # Create a source that returns a frame with markers
+        marker_img = _make_marker_image([0, 1, 2, 3])
+
+        class MarkerSource(CaptureSource):
+            name = "marker"
+            def open(self): pass
+            def read(self): return marker_img.copy()
+            def close(self): pass
+
+        cam = CameraCapture(source=MarkerSource(), calibration_file=cal_file)
+        cam.start()
+        jpeg, raw, H = cam.get_rectified_frame()
+
+        assert jpeg is not None
+        assert os.path.exists(cal_file)
+
+        # Verify saved file matches
+        saved_H = np.load(cal_file)
+        np.testing.assert_array_equal(saved_H, H)
+
+    def test_cached_calibration_works_without_markers(self, tmp_path):
+        """Startup with cached calibration produces frames even without markers."""
+        from client.camera import CameraCapture
+        from client.capture import CaptureSource
+
+        cal_file = str(tmp_path / "cal.npy")
+
+        # First: get a real homography from a marker frame
+        marker_img = _make_marker_image([0, 1, 2, 3])
+
+        class MarkerSource(CaptureSource):
+            name = "marker"
+            def open(self): pass
+            def read(self): return marker_img.copy()
+            def close(self): pass
+
+        cam1 = CameraCapture(source=MarkerSource(), calibration_file=cal_file)
+        cam1.start()
+        cam1.get_rectified_frame()
+        cam1.stop()
+
+        # Now start with a blank frame (no markers) but cached calibration
+        blank = np.ones((600, 600, 3), dtype=np.uint8) * 128
+
+        class BlankSource(CaptureSource):
+            name = "blank"
+            def open(self): pass
+            def read(self): return blank.copy()
+            def close(self): pass
+
+        cam2 = CameraCapture(source=BlankSource(), calibration_file=cal_file)
+        cam2.start()
+        jpeg, raw, H = cam2.get_rectified_frame()
+
+        assert jpeg is not None
+        assert H is not None
