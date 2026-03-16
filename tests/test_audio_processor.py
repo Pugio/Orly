@@ -208,10 +208,10 @@ class TestEchoSuppression:
         proc.set_speaker_active(False)
         # Before holdover expires, speaker starts again
         proc.set_speaker_active(True)
-        assert proc._in_echo_window is True
+        assert proc._in_echo_window() is True
         # Stop again — holdover clock should restart
         proc.set_speaker_active(False)
-        assert proc._in_echo_window is True  # within holdover
+        assert proc._in_echo_window() is True  # within holdover
 
     def test_silence_gated_during_playback(self):
         proc = AudioProcessor(noise_gate_rms=150, echo_gate_rms=800)

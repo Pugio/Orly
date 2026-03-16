@@ -326,11 +326,13 @@ async def audio_send_loop(audio_capture: AudioCapture, client: TableLightClient,
     while True:
         chunk = audio_capture.get_chunk()
         if chunk:
+            # Diagnostics track the *raw* mic signal (before processing)
+            # so voice detection and RMS readings reflect actual input.
+            if diag:
+                diag.on_mic_chunk(chunk)
             if processor is not None:
                 chunk = processor.process(chunk)
             await client.send_audio(chunk)
-            if diag:
-                diag.on_mic_chunk(chunk)
         else:
             await asyncio.sleep(0.01)  # tight poll for low audio latency
 
@@ -513,8 +515,11 @@ async def main(args: argparse.Namespace | None = None):
     async def on_audio(audio_bytes: bytes):
         if audio_player:
             audio_player.play(audio_bytes)
-            if audio_processor:
-                audio_processor.set_speaker_active(True)
+            # Speaker state tracking is handled by speaker_state_loop
+            # which polls audio_player.is_playing at 20Hz.  We don't
+            # call set_speaker_active(True) here because that would
+            # fire on every audio chunk (~50/s) and create races with
+            # the polling loop's False→True transitions.
         if audio_diag:
             audio_diag.on_audio_out()
 
