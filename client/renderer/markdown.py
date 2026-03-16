@@ -74,13 +74,6 @@ def _sanitize_latex(text: str) -> str:
     return text
 
 
-def _strip_inline_markers(text: str) -> str:
-    """Strip **bold** and $math$ markers, returning plain display text."""
-    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-    text = re.sub(r'\$(.*?)\$', r'\1', text)
-    return text
-
-
 def _parse_line_segments(line: str) -> list[dict]:
     """Split a line into segments with inline formatting.
 
@@ -182,7 +175,7 @@ def _wrap_segments(segments: list[dict], max_chars: int) -> list[list[dict]]:
     ]
 
 
-def _render_markdown_public(
+def _render_markdown_impl(
     text: str,
     width: int,
     height: int,
@@ -203,7 +196,7 @@ def _render_markdown_public(
         return img
 
     try:
-        return _render_markdown_impl(text, width, height)
+        return _render_markdown_core(text, width, height)
     except Exception as e:
         # If rendering fails (e.g. unsupported LaTeX), fall back to
         # plain text annotation so the client never crashes.
@@ -216,8 +209,8 @@ def _render_markdown_public(
         return _render_annotation_impl(plain.strip(), width, height)
 
 
-def _render_markdown_impl(text: str, width: int, height: int) -> np.ndarray:
-    """Internal implementation — may raise on bad LaTeX."""
+def _render_markdown_core(text: str, width: int, height: int) -> np.ndarray:
+    """Internal matplotlib rendering — may raise on bad LaTeX."""
     dpi = 100
     fig_w = width / dpi
     fig_h = height / dpi
@@ -298,7 +291,7 @@ def _render_markdown_impl(text: str, width: int, height: int) -> np.ndarray:
 
 def render_markdown(data: dict, width: int, height: int, title: str = "") -> np.ndarray:
     """Registry-compatible wrapper: render markdown from data dict."""
-    return _render_markdown_public(data.get("text", title), width, height)
+    return _render_markdown_impl(data.get("text", title), width, height)
 
 
 SPEC = {

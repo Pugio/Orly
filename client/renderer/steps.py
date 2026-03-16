@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from client.renderer.markdown import _render_markdown_public as _render_md
+from client.renderer.markdown import _render_markdown_impl as _render_md
 
 
 def _render_steps_impl(

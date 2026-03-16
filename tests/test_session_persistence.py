@@ -115,9 +115,8 @@ def test_restore_session_state_returns_overlay_count(store):
     store.save_overlay_state(state)
 
     overlay_manager = MagicMock()
-    overlay_state = MagicMock()
 
-    count = restore_session_state(store, overlay_manager, overlay_state)
+    count = restore_session_state(store, overlay_manager)
     assert count == 2
     # Verify handle_tool_result was called for each non-image overlay
     assert overlay_manager.handle_tool_result.call_count == 2
@@ -128,8 +127,7 @@ def test_restore_session_state_empty(store):
     from client.session_restore import restore_session_state
 
     overlay_manager = MagicMock()
-    overlay_state = MagicMock()
-    count = restore_session_state(store, overlay_manager, overlay_state)
+    count = restore_session_state(store, overlay_manager)
     assert count == 0
 
 

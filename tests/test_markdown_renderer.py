@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from client.renderer.markdown import _render_markdown_public as render_markdown
+from client.renderer.markdown import _render_markdown_impl as render_markdown
 
 
 class TestRenderMarkdown:

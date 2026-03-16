@@ -240,8 +240,9 @@ class OverlayManager:
             # Use perspective warp instead of bounding-box resize to
             # preserve perspective correction for off-axis projectors.
             oh, ow = overlay.shape[:2]
+            # Must match src_corners order: TL, BL, BR, TR
             overlay_corners = np.array(
-                [[0, 0], [ow, 0], [ow, oh], [0, oh]], dtype=np.float32
+                [[0, 0], [0, oh], [ow, oh], [ow, 0]], dtype=np.float32
             )
             # dst_corners columns: 0=px, 1=py → getPerspectiveTransform wants (x,y)
             dst_xy = dst_corners.astype(np.float32)
@@ -250,7 +251,8 @@ class OverlayManager:
                 overlay, M, (self.proj_width, self.proj_height)
             )
             # Composite: non-black warped pixels onto canvas
-            mask = warped.sum(axis=2) > 0
+            threshold = 30 if self.white_bg else 0
+            mask = warped.sum(axis=2) > threshold
             canvas[mask] = warped[mask]
             use_direct = False
 

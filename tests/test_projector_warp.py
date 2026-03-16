@@ -88,3 +88,32 @@ class TestProjectorWarp:
         has_red = (canvas[:, :, 2] > 200).sum() > 0
         has_green = (canvas[:, :, 1] > 200).sum() > 0
         assert has_red and has_green
+
+    def test_warp_preserves_orientation(self):
+        """Asymmetric overlay must not get transposed by the warp.
+
+        Place a red dot in the top-right corner of the overlay. After warping
+        with identity-like H, the red should still be in the top-right region
+        of the canvas placement, not bottom-left (which would indicate the
+        corner correspondence was wrong).
+        """
+        H = _identity_H()
+        mgr = OverlayManager(H_proj=H, proj_width=1280, proj_height=720, mode="projector")
+        # Overlay with red dot ONLY in top-right corner
+        overlay = np.zeros((100, 100, 3), dtype=np.uint8)
+        overlay[0:20, 80:100, :] = (0, 0, 255)  # red in top-right
+
+        # Place in center of table [250, 250, 750, 750]
+        canvas = mgr.place_on_canvas(overlay, [250, 250, 750, 750])
+
+        # With identity H: x=250-750 → px=320-960, y=250-750 → py=180-540
+        # Top-right of overlay → top-right of placement region
+        # Red should be in top half, right half of placement area
+        mid_x = (320 + 960) // 2
+        mid_y = (180 + 540) // 2
+        top_right = canvas[180:mid_y, mid_x:960]
+        bottom_left = canvas[mid_y:540, 320:mid_x]
+        red_tr = (top_right[:, :, 2] > 200).sum()
+        red_bl = (bottom_left[:, :, 2] > 200).sum()
+        assert red_tr > 0, "Red dot should be in top-right of warped area"
+        assert red_bl == 0, "Red dot should NOT be in bottom-left (transposed)"

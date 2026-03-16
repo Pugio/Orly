@@ -9,7 +9,7 @@ def save_session_state(session_store, overlay_state, scene_order) -> None:
     session_store.save_scene_order(scene_order)
 
 
-def restore_session_state(session_store, overlay_manager, overlay_state) -> int:
+def restore_session_state(session_store, overlay_manager) -> int:
     """Restore saved session state. Returns number of overlays restored.
 
     Re-renders non-image overlays from saved data. Image overlays are
