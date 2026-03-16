@@ -59,6 +59,9 @@ class OverlayManager:
         self._saved_canvas = None  # stashed canvas during refresh
         # Last clean frame (JPEG bytes) captured by video_loop.
         self.last_clean_frame: bytes | None = None
+        # Generation ID — incremented on clear() so background image threads
+        # can detect that an interruption happened and skip showing stale images.
+        self._generation_id: int = 0
 
     def handle_tool_result(self, name: str, result: dict):
         """Process a tool result from the backend and render the overlay."""
@@ -114,6 +117,7 @@ class OverlayManager:
 
     def _generate_image_async(self, placement: list, title: str, data: dict):
         """Background thread: generate image and swap onto canvas."""
+        gen_id = self._generation_id
         try:
             w, h = self._placement_pixel_size(placement)
             prompt = data.get("prompt", title)
@@ -145,6 +149,14 @@ class OverlayManager:
 
             if self.session_store:
                 self.session_store.save_image(title, overlay)
+
+            # If an interruption cleared the canvas while we were generating,
+            # skip showing the stale image.
+            if self._generation_id != gen_id:
+                logger.info("Image '%s' ready but canvas was cleared — skipping display", title)
+                if self.notify_fn:
+                    self.notify_fn(f"Image '{title}' generated but not displayed (interrupted).")
+                return
 
             self._show_overlay(overlay, placement, "image")
 
@@ -352,6 +364,13 @@ class OverlayManager:
             logger.info("Refresh complete — overlays restored.")
 
     def clear(self):
-        """Clear all overlays (reset canvas to background)."""
+        """Clear all overlays (reset canvas to background).
+
+        Also cancels any in-flight refresh cycle so complete_refresh()
+        doesn't restore a stale pre-interrupt canvas.
+        """
         self.canvas = self._make_bg()
         self._has_content = False
+        self._refresh_requested = False
+        self._saved_canvas = None
+        self._generation_id += 1
