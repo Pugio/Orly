@@ -57,7 +57,7 @@ class TestFlashcardRenderer:
 
 class TestFlipFlashcardTool:
     def test_flip_flashcard_returns_status(self):
-        from backend.tools import flip_flashcard
-        result = flip_flashcard("vocab_card")
+        from backend.tools import overlay
+        result = overlay(action="flip_flashcard", overlay_name="vocab_card")
         assert result["status"] == "flipping"
         assert result["overlay_name"] == "vocab_card"
