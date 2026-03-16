@@ -54,7 +54,7 @@ gcloud run deploy "${SERVICE}" \
     --min-instances=0 \
     --timeout=3600 \
     --allow-unauthenticated \
-    --set-env-vars "GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION}"
+    --update-env-vars "GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION}"
 
 # --- Print deployed URL ---
 echo ""
